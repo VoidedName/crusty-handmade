@@ -1,13 +1,24 @@
 use std::ffi::c_void;
 use std::mem;
 use std::ptr::null_mut;
+
+use crate::x_input::{
+    load_xinput, XINPUT, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_BACK,
+    XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT,
+    XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
+    XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_STATE, XINPUT_VIBRATION,
+    XUSER_MAX_COUNT,
+};
 use windows::Win32::System::Memory::{
     VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
+
+mod x_input;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 enum RunState {
@@ -53,6 +64,8 @@ global_mut!(GLOBAL_BACK_BUFFER: OffscreenBuffer = OffscreenBuffer {
     height: 0,
 });
 
+global_mut!(XINPUT: Option<XINPUT> = None);
+
 struct OffscreenBuffer {
     info: BITMAPINFO,
     memory: *mut c_void,
@@ -69,12 +82,6 @@ impl OffscreenBuffer {
     pub fn memory_size(&self) -> i32 {
         self.bytes_per_pixel * self.width * self.height
     }
-}
-
-#[derive(Copy, Clone)]
-struct WindowDimensions {
-    width: i32,
-    height: i32,
 }
 
 unsafe fn window_dimension(window: HWND) -> (i32, i32) {
@@ -135,12 +142,12 @@ unsafe fn resize_dib_section(buffer: &mut OffscreenBuffer, width: i32, height: i
 }
 
 unsafe fn display_buffer_in_window(
+    buffer: &OffscreenBuffer,
     device_context: HDC,
     x: i32,
     y: i32,
     window_width: i32,
     window_height: i32,
-    buffer: &OffscreenBuffer,
 ) {
     //TODO(voided): Aspect ratio correction
     StretchDIBits(
@@ -166,57 +173,111 @@ pub unsafe extern "system" fn window_procedure(
     w_param: WPARAM,
     l_param: LPARAM,
 ) -> LRESULT {
-    unsafe {
-        let mut result: LRESULT = LRESULT(0);
-        match message {
-            WM_ACTIVATEAPP => {
-                println!("WM_ACTIVATEAPP");
-            }
-            WM_SIZE => {
-                println!("WM_SIZE");
-            }
-            WM_CLOSE => {
-                println!("WM_CLOSE");
-                //TODO(voided): Handle with message to the user?
-                RUN_STATE = RunState::Stopping;
-            }
-            WM_DESTROY => {
-                println!("WM_DESTROY");
-                //TODO(voided): Handle this as error - recreate the window?
-                RUN_STATE = RunState::Stopping;
-            }
-            WM_PAINT => {
-                println!("WM_PAINT");
+    let mut result: LRESULT = LRESULT(0);
+    match message {
+        WM_ACTIVATEAPP => {
+            println!("WM_ACTIVATEAPP");
+        }
+        WM_SIZE => {
+            println!("WM_SIZE");
+        }
+        WM_CLOSE => {
+            println!("WM_CLOSE");
+            //TODO(voided): Handle with message to the user?
+            RUN_STATE = RunState::Stopping;
+        }
+        WM_DESTROY => {
+            println!("WM_DESTROY");
+            //TODO(voided): Handle this as error - recreate the window?
+            RUN_STATE = RunState::Stopping;
+        }
 
-                let (window_width, window_height) = window_dimension(window);
+        WM_SYSKEYDOWN | WM_SYSKEYUP | WM_KEYDOWN | WM_KEYUP => {
+            const KEY_PREVIOUS_DOWN: u32 = 1 << 30;
+            const KEY_IS_UP: u32 = 1 << 31;
 
-                let mut paint: PAINTSTRUCT = PAINTSTRUCT::default();
-                let hdc = BeginPaint(window, &mut paint);
+            let l_param = l_param.0 as u32;
 
-                let x = paint.rcPaint.left;
-                let y = paint.rcPaint.top;
+            let vk_code = VIRTUAL_KEY(w_param.0 as _);
+            let key_was_down = l_param & KEY_PREVIOUS_DOWN != 0;
+            let key_is_down = l_param & KEY_IS_UP == 0;
 
-                display_buffer_in_window(
-                    hdc,
-                    x,
-                    y,
-                    window_width,
-                    window_height,
-                    &GLOBAL_BACK_BUFFER,
-                );
-                EndPaint(window, &paint);
-            }
-            _ => {
-                result = DefWindowProcW(window, message, w_param, l_param);
+            if key_is_down != key_was_down {
+                match vk_code {
+                    VK_W => {
+                        println!("W")
+                    }
+                    VK_A => {
+                        println!("A")
+                    }
+                    VK_S => {
+                        println!("S")
+                    }
+                    VK_D => {
+                        println!("D")
+                    }
+                    VK_Q => {
+                        println!("Q")
+                    }
+                    VK_E => {
+                        println!("E")
+                    }
+                    VK_UP => {
+                        println!("Up")
+                    }
+                    VK_DOWN => {
+                        println!("Down")
+                    }
+                    VK_LEFT => {
+                        println!("Left")
+                    }
+                    VK_RIGHT => {
+                        println!("Right")
+                    }
+                    VK_ESCAPE => {
+                        println!(
+                            "Escape - key_is_down: {key_is_down} - key_was_down: {key_was_down}"
+                        )
+                    }
+                    VK_SPACE => {
+                        println!("Space")
+                    }
+                    _ => {}
+                }
             }
         }
 
-        result
+        WM_PAINT => {
+            println!("WM_PAINT");
+
+            let (window_width, window_height) = window_dimension(window);
+
+            let mut paint: PAINTSTRUCT = PAINTSTRUCT::default();
+            let hdc = BeginPaint(window, &mut paint);
+
+            let x = paint.rcPaint.left;
+            let y = paint.rcPaint.top;
+
+            display_buffer_in_window(&GLOBAL_BACK_BUFFER, hdc, x, y, window_width, window_height);
+            EndPaint(window, &paint);
+        }
+        _ => {
+            result = DefWindowProcW(window, message, w_param, l_param);
+        }
     }
+
+    result
 }
 
 fn main() -> Result<()> {
     unsafe {
+        XINPUT = load_xinput();
+        if let None = XINPUT {
+            println!("Failed to load XINPUT. No controller support!");
+        } else {
+            println!("Loaded XINPUT. Controller enabled support!");
+        }
+
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
         let instance = GetModuleHandleW(None)?;
@@ -267,24 +328,68 @@ fn main() -> Result<()> {
                 DispatchMessageW(&message);
             }
 
+            //TODO(voided): Update to a more modern api.
+            //TODO(voided): Test how to dynamically load XInput in case it's not available. (day 6 - 22:00)
+            //TODO(voided): Should we poll this more frequently.
+
+            let mut controller_state = XINPUT_STATE::default();
+            if let Some(x_input) = XINPUT.as_ref() {
+                loop {
+                    for controller_index in 0..XUSER_MAX_COUNT {
+                        let result =
+                            (x_input.XInputGetState)(controller_index, &mut controller_state);
+                        if result == ERROR_SUCCESS.0 {
+                            //Note(voided): Controller is plugged in.
+                            //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
+                            let gamepad = &controller_state.Gamepad;
+
+                            let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
+                            let keypad_down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
+                            let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                            let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
+                            let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+                            let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+                            let shoulder_left =
+                                (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+                            let shoulder_right =
+                                (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+                            let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
+                            let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
+                            let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
+                            let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
+
+                            let stick_x = gamepad.sThumbLX;
+                            let stick_y = gamepad.sThumbLY;
+
+                            if button_a {
+                                y_offset += 1;
+                            }
+                        } else {
+                            //Note(Voided): Controller is not available.
+                        }
+                    }
+
+                    break;
+                }
+            }
+
             render_weird_gradient(&GLOBAL_BACK_BUFFER, x_offset, y_offset);
 
             let device_context = GetDC(window);
             let (window_width, window_height) = window_dimension(window);
 
             display_buffer_in_window(
+                &GLOBAL_BACK_BUFFER,
                 device_context,
                 0,
                 0,
                 window_width,
                 window_height,
-                &GLOBAL_BACK_BUFFER,
             );
 
             ReleaseDC(window, device_context);
 
-            x_offset += 2;
-            y_offset += 1;
+            x_offset += 1;
         }
 
         Ok(())
