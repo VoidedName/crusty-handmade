@@ -51,22 +51,17 @@ global_mut!(BITMAP_HEIGTH: i32 = 0);
 const BITS_PER_PIXEL: i32 = 4;
 
 unsafe fn render_weird_gradient(x_offset: i32, y_offest: i32) {
-    // windows rgb order is actually bgr
+    // windows rgb order is actually padding-bgr
+    // on lil endian we need to load xxRRGGBB
     let mut row = BITMAP_MEMORY.cast::<u8>();
     let pitch = (BITMAP_WIDTH * BITS_PER_PIXEL) as isize;
     for y in 0..BITMAP_HEIGTH {
-        let mut pixel = row;
+        let mut pixel = row.cast::<u32>();
         for x in 0..BITMAP_WIDTH {
-            *pixel = (x + x_offset) as u8;
-            pixel = pixel.offset(1);
-
-            *pixel = (y + y_offest) as u8;
-            pixel = pixel.offset(1);
-
-            *pixel = 0;
-            pixel = pixel.offset(1);
-
-            *pixel = 0;
+            let blue = (x + x_offset) as u32 & 0xFF;
+            let green = (y + y_offest) as u32 & 0xFF;
+            let a=  green << 8 | blue;
+            *pixel = a;
             pixel = pixel.offset(1);
         }
         row = row.offset(pitch);
