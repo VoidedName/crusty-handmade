@@ -1,11 +1,13 @@
 use std::ffi::c_void;
 use std::mem;
 use std::ptr::null_mut;
+use windows::Win32::System::Memory::{
+    VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE,
+};
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
-use windows::Win32::System::Memory::{MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE, VirtualAlloc, VirtualFree};
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 enum RunState {
@@ -18,12 +20,13 @@ enum RunState {
 macro_rules! global_mut {
     ($variable:ident : $t:ty = $e:expr) => {
         static mut $variable: $t = $e;
-    }
+    };
 }
 
 //TODO(voided): This is a global for now.
 global_mut!(RUN_STATE: RunState = RunState::Starting);
-global_mut!(BITMAP_INFO: BITMAPINFO = BITMAPINFO {
+global_mut!(GLOBAL_BACK_BUFFER: OffscreenBuffer = OffscreenBuffer {
+    info: BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: 0,
             biWidth: 0,
@@ -37,30 +40,65 @@ global_mut!(BITMAP_INFO: BITMAPINFO = BITMAPINFO {
             biClrUsed: 0,
             biClrImportant: 0,
         },
-        bmiColors: [RGBQUAD {
+        bmiColors: [RGBQUAD{
             rgbBlue: 0,
             rgbGreen: 0,
             rgbRed: 0,
             rgbReserved: 0,
         }],
-    });
-global_mut!(BITMAP_MEMORY: *mut c_void = null_mut());
-global_mut!(BITMAP_WIDTH: i32 = 0);
-global_mut!(BITMAP_HEIGTH: i32 = 0);
+    },
+    memory: null_mut(),
+    bytes_per_pixel: 0,
+    width: 0,
+    height: 0,
+});
 
-const BITS_PER_PIXEL: i32 = 4;
+struct OffscreenBuffer {
+    info: BITMAPINFO,
+    memory: *mut c_void,
+    width: i32,
+    height: i32,
+    bytes_per_pixel: i32,
+}
 
-unsafe fn render_weird_gradient(x_offset: i32, y_offest: i32) {
+impl OffscreenBuffer {
+    pub fn pitch(&self) -> isize {
+        (self.width * self.bytes_per_pixel) as isize
+    }
+
+    pub fn memory_size(&self) -> i32 {
+        self.bytes_per_pixel * self.width * self.height
+    }
+}
+
+#[derive(Copy, Clone)]
+struct WindowDimensions {
+    width: i32,
+    height: i32,
+}
+
+unsafe fn window_dimension(window: HWND) -> (i32, i32) {
+    let mut client_rect = RECT::default();
+    GetClientRect(window, &mut client_rect).expect("Failed to get drawing window rect!");
+
+    let width = client_rect.right - client_rect.left;
+    let height = client_rect.bottom - client_rect.top;
+
+    (width, height)
+}
+
+unsafe fn render_weird_gradient(buffer: &OffscreenBuffer, x_offset: i32, y_offest: i32) {
     // windows rgb order is actually padding-bgr
     // on lil endian we need to load xxRRGGBB
-    let mut row = BITMAP_MEMORY.cast::<u8>();
-    let pitch = (BITMAP_WIDTH * BITS_PER_PIXEL) as isize;
-    for y in 0..BITMAP_HEIGTH {
+    let mut row = buffer.memory.cast::<u8>();
+    let pitch = buffer.pitch();
+
+    for y in 0..buffer.height {
         let mut pixel = row.cast::<u32>();
-        for x in 0..BITMAP_WIDTH {
+        for x in 0..buffer.width {
             let blue = (x + x_offset) as u32 & 0xFF;
             let green = (y + y_offest) as u32 & 0xFF;
-            let a=  green << 8 | blue;
+            let a = green << 8 | blue;
             *pixel = a;
             pixel = pixel.offset(1);
         }
@@ -68,41 +106,57 @@ unsafe fn render_weird_gradient(x_offset: i32, y_offest: i32) {
     }
 }
 
-unsafe fn resize_dib_section(width: i32, height: i32) {
+unsafe fn resize_dib_section(buffer: &mut OffscreenBuffer, width: i32, height: i32) {
     //TODO(voided): bulletproof this.
     //maybe don't free first, free after, then free first if that fails.
 
-    if !BITMAP_MEMORY.is_null() {
-        VirtualFree(BITMAP_MEMORY, 0, MEM_RELEASE).ok();
-        BITMAP_MEMORY = null_mut();
+    if !buffer.memory.is_null() {
+        VirtualFree(buffer.memory, 0, MEM_RELEASE).ok();
+        buffer.memory = null_mut();
     }
 
-    BITMAP_WIDTH = width;
-    BITMAP_HEIGTH = height;
+    buffer.width = width;
+    buffer.height = height;
+    buffer.bytes_per_pixel = 4;
 
-    BITMAP_INFO.bmiHeader.biSize = mem::size_of::<BITMAPINFOHEADER>() as u32;
-    BITMAP_INFO.bmiHeader.biWidth = BITMAP_WIDTH;
-    BITMAP_INFO.bmiHeader.biHeight = -BITMAP_HEIGTH; // sets origin to top left
-    BITMAP_INFO.bmiHeader.biPlanes = 1;
-    BITMAP_INFO.bmiHeader.biBitCount = 32;
-    BITMAP_INFO.bmiHeader.biCompression = BI_RGB.0;
+    buffer.info.bmiHeader.biSize = mem::size_of::<BITMAPINFOHEADER>() as u32;
+    buffer.info.bmiHeader.biWidth = buffer.width;
+    buffer.info.bmiHeader.biHeight = -buffer.height; // sets origin to top left
+    buffer.info.bmiHeader.biPlanes = 1;
+    buffer.info.bmiHeader.biBitCount = 32;
+    buffer.info.bmiHeader.biCompression = BI_RGB.0;
 
-    let bitmap_memory_size = BITS_PER_PIXEL * BITMAP_WIDTH * BITMAP_HEIGTH;
-
-    BITMAP_MEMORY = VirtualAlloc(None, bitmap_memory_size as usize, MEM_COMMIT, PAGE_READWRITE);
+    buffer.memory = VirtualAlloc(
+        None,
+        buffer.memory_size() as usize,
+        MEM_COMMIT,
+        PAGE_READWRITE,
+    );
 }
 
-unsafe fn update_window(device_context: HDC, client_rect: &RECT, x: i32, y: i32, width: i32, height: i32) {
-    let window_width = client_rect.right - client_rect.left;
-    let window_height = client_rect.bottom - client_rect.top;
+unsafe fn display_buffer_in_window(
+    device_context: HDC,
+    x: i32,
+    y: i32,
+    window_width: i32,
+    window_height: i32,
+    buffer: &OffscreenBuffer,
+) {
+    //TODO(voided): Aspect ratio correction
     StretchDIBits(
         device_context,
-        // x, y, width, height,
-        0, 0, BITMAP_WIDTH, BITMAP_HEIGTH,
-        0, 0, window_width, window_height,
-        Some(BITMAP_MEMORY),
-        &BITMAP_INFO,
-        DIB_RGB_COLORS, SRCCOPY,
+        x,
+        y,
+        window_width,
+        window_height,
+        0,
+        0,
+        buffer.width,
+        buffer.height,
+        Some(buffer.memory),
+        &buffer.info,
+        DIB_RGB_COLORS,
+        SRCCOPY,
     );
 }
 
@@ -120,13 +174,6 @@ pub unsafe extern "system" fn window_procedure(
             }
             WM_SIZE => {
                 println!("WM_SIZE");
-                let mut client_rect = RECT::default();
-                GetClientRect(window, &mut client_rect).expect("Failed to get drawing window!");
-
-                let width = client_rect.right - client_rect.left;
-                let height = client_rect.bottom - client_rect.top;
-
-                resize_dib_section(width, height);
             }
             WM_CLOSE => {
                 println!("WM_CLOSE");
@@ -140,18 +187,23 @@ pub unsafe extern "system" fn window_procedure(
             }
             WM_PAINT => {
                 println!("WM_PAINT");
-                let mut client_rect = RECT::default();
-                GetClientRect(window, &mut client_rect).expect("Failed to get drawing window!");
+
+                let (window_width, window_height) = window_dimension(window);
 
                 let mut paint: PAINTSTRUCT = PAINTSTRUCT::default();
                 let hdc = BeginPaint(window, &mut paint);
 
                 let x = paint.rcPaint.left;
                 let y = paint.rcPaint.top;
-                let width = paint.rcPaint.right - paint.rcPaint.left;
-                let height = paint.rcPaint.bottom - paint.rcPaint.top;
 
-                update_window(hdc, &client_rect, x, y, width, height);
+                display_buffer_in_window(
+                    hdc,
+                    x,
+                    y,
+                    window_width,
+                    window_height,
+                    &GLOBAL_BACK_BUFFER,
+                );
                 EndPaint(window, &paint);
             }
             _ => {
@@ -165,6 +217,8 @@ pub unsafe extern "system" fn window_procedure(
 
 fn main() -> Result<()> {
     unsafe {
+        resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
+
         let instance = GetModuleHandleW(None)?;
         debug_assert!(instance.0 != 0);
 
@@ -175,7 +229,7 @@ fn main() -> Result<()> {
             hInstance: instance.into(),
             lpszClassName: window_class,
 
-            style: CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
+            style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(window_procedure),
             ..Default::default()
         };
@@ -213,16 +267,20 @@ fn main() -> Result<()> {
                 DispatchMessageW(&message);
             }
 
-            render_weird_gradient(x_offset, y_offset);
+            render_weird_gradient(&GLOBAL_BACK_BUFFER, x_offset, y_offset);
 
             let device_context = GetDC(window);
-            let mut client_rect = RECT::default();
-            GetClientRect(window, &mut client_rect).expect("Failed to get drawing window!");
+            let (window_width, window_height) = window_dimension(window);
 
-            let window_width = client_rect.right - client_rect.left;
-            let window_height = client_rect.bottom - client_rect.top;
+            display_buffer_in_window(
+                device_context,
+                0,
+                0,
+                window_width,
+                window_height,
+                &GLOBAL_BACK_BUFFER,
+            );
 
-            update_window(device_context, &client_rect, 0, 0, window_width, window_height);
             ReleaseDC(window, device_context);
 
             x_offset += 2;
