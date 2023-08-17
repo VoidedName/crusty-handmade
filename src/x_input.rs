@@ -4,7 +4,9 @@
 use std::mem;
 
 use windows::core::*;
+use windows::Win32::Foundation::ERROR_DEVICE_NOT_CONNECTED;
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+use crate::global_mut;
 
 type BYTE = u8;
 type SHORT = u16;
@@ -59,23 +61,32 @@ pub struct XINPUT_VIBRATION {
     pub wRightMotorSpeed: WORD,
 }
 
-//noinspection ALL
-pub struct XINPUT {
-    ///[`XInputGetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)
-    pub XInputGetState: unsafe fn(
-        /* in: dwUserIndex */ WORD,
-        /* out: pState */ *mut XINPUT_STATE,
-    ) -> WORD,
-    ///[`XInputSetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputsetstate)
-    pub XInputSetState: unsafe fn(
-        /* in: dwUserIndex */ WORD,
-        /* in out: pVibration */ *mut XINPUT_VIBRATION,
-    ) -> WORD,
+///[`XInputSetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputsetstate)
+type XInputSetState__ = unsafe fn(
+    /* in: dwUserIndex */ WORD,
+    /* in out: pVibration */ *mut XINPUT_VIBRATION,
+) -> WORD;
+global_mut!(XInputSetState: XInputSetState__ = XInputSetState__Stub);
+fn XInputSetState__Stub(_: WORD, _: *mut XINPUT_VIBRATION) -> WORD {
+    ERROR_DEVICE_NOT_CONNECTED.0
 }
 
-pub fn load_xinput() -> Option<XINPUT> {
+///[`XInputGetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)
+type XInputGetState__ = unsafe fn(
+    /* in: dwUserIndex */ WORD,
+    /* out: pState */ *mut XINPUT_STATE,
+) -> WORD;
+global_mut!(XInputGetState: XInputGetState__ = XInputGetState__Stub);
+fn XInputGetState__Stub(_: WORD, _: *mut XINPUT_STATE) -> WORD {
+    ERROR_DEVICE_NOT_CONNECTED.0
+}
+
+pub fn load_xinput() -> Option<()> {
     unsafe {
-        if let Ok(module) = LoadLibraryW(w!("XInput1_4.dll")) {
+        let lib = LoadLibraryW(w!("XInput1_4.dll"))
+            .or_else(|_| LoadLibraryW(w!("XInput1_3.dll")));
+
+        if let Ok(module) = lib {
             if !module.is_invalid() {
                 let xinput_get_state = GetProcAddress(module, s!("XInputGetState"));
                 let xinput_set_state = GetProcAddress(module, s!("XInputSetState"));
@@ -84,10 +95,9 @@ pub fn load_xinput() -> Option<XINPUT> {
                 return if xinput_get_state.is_none() || xinput_set_state.is_none() {
                     None
                 } else {
-                    Some(XINPUT {
-                        XInputGetState: mem::transmute(xinput_get_state.unwrap()),
-                        XInputSetState: mem::transmute(xinput_set_state.unwrap()),
-                    })
+                    XInputGetState = mem::transmute(xinput_get_state.unwrap());
+                    XInputSetState = mem::transmute(xinput_set_state.unwrap());
+                    Some(())
                 };
             }
         }

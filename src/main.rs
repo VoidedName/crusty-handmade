@@ -2,13 +2,7 @@ use std::ffi::c_void;
 use std::mem;
 use std::ptr::null_mut;
 
-use crate::x_input::{
-    load_xinput, XINPUT, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_BACK,
-    XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT,
-    XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
-    XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_STATE, XINPUT_VIBRATION,
-    XUSER_MAX_COUNT,
-};
+use crate::x_input::*;
 use windows::Win32::System::Memory::{
     VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE,
 };
@@ -17,11 +11,13 @@ use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
+use windows::Win32::Media::Audio::DirectSound::{DirectSoundCreate, DSBCAPS_PRIMARYBUFFER, DSBUFFERDESC, DSSCL_PRIORITY, IDirectSound};
+use windows::Win32::Media::Audio::{WAVE_FORMAT_PCM, WAVEFORMATEX};
 
 mod x_input;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
-enum RunState {
+pub enum RunState {
     Starting,
     Running,
     Stopping,
@@ -30,9 +26,11 @@ enum RunState {
 ///Declares a static mut! Allows to search for specifically global muts
 macro_rules! global_mut {
     ($variable:ident : $t:ty = $e:expr) => {
-        static mut $variable: $t = $e;
+        pub static mut $variable: $t = $e;
     };
 }
+
+use global_mut;
 
 //TODO(voided): This is a global for now.
 global_mut!(RUN_STATE: RunState = RunState::Starting);
@@ -64,9 +62,7 @@ global_mut!(GLOBAL_BACK_BUFFER: OffscreenBuffer = OffscreenBuffer {
     height: 0,
 });
 
-global_mut!(XINPUT: Option<XINPUT> = None);
-
-struct OffscreenBuffer {
+pub struct OffscreenBuffer {
     info: BITMAPINFO,
     memory: *mut c_void,
     width: i32,
@@ -92,6 +88,104 @@ unsafe fn window_dimension(window: HWND) -> (i32, i32) {
     let height = client_rect.bottom - client_rect.top;
 
     (width, height)
+}
+
+
+unsafe fn init_d_sound(window: HWND, buffer_size: u32, samples_per_second: u32) {
+    //TODO(voided): Replace with something newer.
+    //Note(voided): Decided not to dynamically load this, cause the oop nature of it seems like a pain,
+    // and i'm not willing to fight with it right now
+
+    let mut d_sound: Option<IDirectSound> = None;
+    match DirectSoundCreate(None, &mut d_sound, None) {
+        Err(_) => {
+            //TODO(voided): Diagnostics
+        }
+        Ok(_) => {
+            match &d_sound {
+                None => {
+                    //TODO(voided): Diagnostics
+                }
+                Some(d_sound) => {
+                    let channels: u16 = 2;
+                    let bits_per_sample: u16 = 16;
+                    let mut wave_format = WAVEFORMATEX {
+                        wFormatTag: WAVE_FORMAT_PCM as _,
+                        nChannels: channels,
+                        nSamplesPerSec: samples_per_second,
+                        nAvgBytesPerSec: samples_per_second * channels as u32 * bits_per_sample as u32 / 8,
+                        wBitsPerSample: bits_per_sample as _,
+                        nBlockAlign: channels * bits_per_sample / 8,
+                        ..Default::default()
+                    };
+
+                    match d_sound.SetCooperativeLevel(window, DSSCL_PRIORITY) {
+                        Err(_) => {
+                            //TODO(voided): Diagnostics
+                        }
+                        Ok(_) => {
+                            //NOTE(voided): "Create" a primary buffer.
+                            let primary_buffer_description = DSBUFFERDESC {
+                                dwSize: mem::size_of::<DSBUFFERDESC>() as u32,
+                                dwFlags: DSBCAPS_PRIMARYBUFFER,
+                                ..Default::default()
+                            };
+                            let mut primary_buffer = None;
+                            match d_sound.CreateSoundBuffer(&primary_buffer_description, &mut primary_buffer, None) {
+                                Err(..) => {
+                                    //TODO(voided): Diagnostics
+                                }
+                                Ok(_) => {
+                                    match &primary_buffer {
+                                        None => {
+                                            //TODO(voided): Diagnostics
+                                        }
+                                        Some(primary_buffer) => {
+                                            match primary_buffer.SetFormat(&wave_format) {
+                                                Err(..) => {
+                                                    //TODO(voided): Diagnostics
+                                                }
+                                                Ok(_) => {
+                                                    println!("{}", "primary buffer created successfully");
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let mut secondary_buffer = None;
+                    let secondary_buffer_description = DSBUFFERDESC {
+                        dwSize: mem::size_of::<DSBUFFERDESC>() as u32,
+                        dwBufferBytes: buffer_size,
+                        lpwfxFormat: &mut wave_format,
+                        ..Default::default()
+                    };
+                    match d_sound.CreateSoundBuffer(&secondary_buffer_description, &mut secondary_buffer, None) {
+                        Err(..) => {
+                            //TODO(voided): Diagnostics
+                        }
+                        Ok(_) => {
+                            match &secondary_buffer {
+                                None => {
+                                    //TODO(voided): Diagnostics
+                                }
+                                Some(secondary_buffer) => {
+                                    println!("{}", "secondary buffer created successfully");
+                                }
+                            }
+                        }
+                    }
+                }
+
+                //NOTE(voided): "Create" a secondary buffer.
+
+                //NOTE(voided): Start it playing!
+            }
+        }
+    }
 }
 
 unsafe fn render_weird_gradient(buffer: &OffscreenBuffer, x_offset: i32, y_offest: i32) {
@@ -193,14 +287,16 @@ pub unsafe extern "system" fn window_procedure(
         }
 
         WM_SYSKEYDOWN | WM_SYSKEYUP | WM_KEYDOWN | WM_KEYUP => {
-            const KEY_PREVIOUS_DOWN: u32 = 1 << 30;
-            const KEY_IS_UP: u32 = 1 << 31;
+            const KEY_ALT_IS_DOWN_FLAG: u32 = 1 << 29;
+            const KEY_PREVIOUS_DOWN_FLAG: u32 = 1 << 30;
+            const KEY_IS_UP_FLAG: u32 = 1 << 31;
 
             let l_param = l_param.0 as u32;
 
             let vk_code = VIRTUAL_KEY(w_param.0 as _);
-            let key_was_down = l_param & KEY_PREVIOUS_DOWN != 0;
-            let key_is_down = l_param & KEY_IS_UP == 0;
+            let key_was_down = l_param & KEY_PREVIOUS_DOWN_FLAG != 0;
+            let key_is_down = l_param & KEY_IS_UP_FLAG == 0;
+            let key_alt_is_down = l_param & KEY_ALT_IS_DOWN_FLAG != 0;
 
             if key_is_down != key_was_down {
                 match vk_code {
@@ -245,6 +341,10 @@ pub unsafe extern "system" fn window_procedure(
                     _ => {}
                 }
             }
+
+            if vk_code == VK_F4 && key_alt_is_down {
+                RUN_STATE = RunState::Stopping;
+            }
         }
 
         WM_PAINT => {
@@ -271,11 +371,13 @@ pub unsafe extern "system" fn window_procedure(
 
 fn main() -> Result<()> {
     unsafe {
-        XINPUT = load_xinput();
-        if let None = XINPUT {
-            println!("Failed to load XINPUT. No controller support!");
-        } else {
-            println!("Loaded XINPUT. Controller enabled support!");
+        {
+            let x_input = load_xinput();
+            if let None = x_input {
+                println!("Failed to load XINPUT. No controller support!");
+            } else {
+                println!("Loaded XINPUT. Controller support enabled!");
+            }
         }
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
@@ -313,6 +415,8 @@ fn main() -> Result<()> {
             None,
         );
 
+        init_d_sound(window, 48000 * mem::size_of::<i16>() as u32 * 2, 48000);
+
         RUN_STATE = RunState::Running;
         let mut message = MSG::default();
         let mut x_offset = 0;
@@ -333,44 +437,41 @@ fn main() -> Result<()> {
             //TODO(voided): Should we poll this more frequently.
 
             let mut controller_state = XINPUT_STATE::default();
-            if let Some(x_input) = XINPUT.as_ref() {
-                loop {
-                    for controller_index in 0..XUSER_MAX_COUNT {
-                        let result =
-                            (x_input.XInputGetState)(controller_index, &mut controller_state);
-                        if result == ERROR_SUCCESS.0 {
-                            //Note(voided): Controller is plugged in.
-                            //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
-                            let gamepad = &controller_state.Gamepad;
+            loop {
+                for controller_index in 0..XUSER_MAX_COUNT {
+                    let result = XInputGetState(controller_index, &mut controller_state);
+                    if result == ERROR_SUCCESS.0 {
+                        //Note(voided): Controller is plugged in.
+                        //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
+                        let gamepad = &controller_state.Gamepad;
 
-                            let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
-                            let keypad_down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
-                            let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
-                            let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
-                            let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-                            let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-                            let shoulder_left =
-                                (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
-                            let shoulder_right =
-                                (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
-                            let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
-                            let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
-                            let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
-                            let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
+                        let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
+                        let keypad_down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
+                        let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                        let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
+                        let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+                        let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+                        let shoulder_left =
+                            (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+                        let shoulder_right =
+                            (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+                        let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
+                        let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
+                        let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
+                        let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
 
-                            let stick_x = gamepad.sThumbLX;
-                            let stick_y = gamepad.sThumbLY;
+                        let stick_x = gamepad.sThumbLX;
+                        let stick_y = gamepad.sThumbLY;
 
-                            if button_a {
-                                y_offset += 1;
-                            }
-                        } else {
-                            //Note(Voided): Controller is not available.
+                        if button_a {
+                            y_offset += 1;
                         }
+                    } else {
+                        //Note(Voided): Controller is not available.
                     }
-
-                    break;
                 }
+
+                break;
             }
 
             render_weird_gradient(&GLOBAL_BACK_BUFFER, x_offset, y_offset);
