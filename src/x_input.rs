@@ -3,10 +3,10 @@
 
 use std::mem;
 
+use crate::global_mut;
 use windows::core::*;
 use windows::Win32::Foundation::ERROR_DEVICE_NOT_CONNECTED;
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
-use crate::global_mut;
 
 type BYTE = u8;
 type SHORT = u16;
@@ -73,8 +73,7 @@ fn XInputSetState__Stub(_: WORD, _: *mut XINPUT_VIBRATION) -> WORD {
 
 ///[`XInputGetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)
 type XInputGetState__ = unsafe fn(
-    /* in: dwUserIndex */ WORD,
-    /* out: pState */ *mut XINPUT_STATE,
+    /* in: dwUserIndex */ WORD, /* out: pState */ *mut XINPUT_STATE
 ) -> WORD;
 global_mut!(XInputGetState: XInputGetState__ = XInputGetState__Stub);
 fn XInputGetState__Stub(_: WORD, _: *mut XINPUT_STATE) -> WORD {
@@ -83,8 +82,7 @@ fn XInputGetState__Stub(_: WORD, _: *mut XINPUT_STATE) -> WORD {
 
 pub fn load_xinput() -> Option<()> {
     unsafe {
-        let lib = LoadLibraryW(w!("XInput1_4.dll"))
-            .or_else(|_| LoadLibraryW(w!("XInput1_3.dll")));
+        let lib = LoadLibraryW(w!("XInput1_4.dll")).or_else(|_| LoadLibraryW(w!("XInput1_3.dll")));
 
         if let Ok(module) = lib {
             if !module.is_invalid() {

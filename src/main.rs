@@ -1,20 +1,26 @@
 use std::ffi::c_void;
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::mem;
 use std::ptr::null_mut;
+use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{channel, Sender};
 
-use crate::x_input::*;
-use windows::Win32::System::Memory::{
-    VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE,
-};
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
+use cpal::{BufferSize, Host, Sample, SampleFormat, SampleRate, Stream};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
-use windows::Win32::Media::Audio::DirectSound::{DirectSoundCreate, DSBCAPS_PRIMARYBUFFER, DSBUFFERDESC, DSSCL_PRIORITY, IDirectSound};
-use windows::Win32::Media::Audio::{WAVE_FORMAT_PCM, WAVEFORMATEX};
+use windows::Win32::System::Memory::{
+    MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
+
+use crate::x_input::*;
 
 mod x_input;
+mod ring_buffer;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum RunState {
@@ -31,6 +37,7 @@ macro_rules! global_mut {
 }
 
 use global_mut;
+use crate::ring_buffer::RingBuffer;
 
 //TODO(voided): This is a global for now.
 global_mut!(RUN_STATE: RunState = RunState::Starting);
@@ -90,100 +97,67 @@ unsafe fn window_dimension(window: HWND) -> (i32, i32) {
     (width, height)
 }
 
+struct AudioOutput {
+    host: Host,
+    pub buffer: Arc<Mutex<RingBuffer<f32>>>,
+    pub sample_rate: u32,
+    pub channels: u32,
+    stream: Stream,
+}
 
-unsafe fn init_d_sound(window: HWND, buffer_size: u32, samples_per_second: u32) {
-    //TODO(voided): Replace with something newer.
-    //Note(voided): Decided not to dynamically load this, cause the oop nature of it seems like a pain,
-    // and i'm not willing to fight with it right now
+//TODO: Deal with disconnected audio etc
 
-    let mut d_sound: Option<IDirectSound> = None;
-    match DirectSoundCreate(None, &mut d_sound, None) {
-        Err(_) => {
-            //TODO(voided): Diagnostics
-        }
-        Ok(_) => {
-            match &d_sound {
-                None => {
-                    //TODO(voided): Diagnostics
+impl AudioOutput {
+    pub fn new(playback_buffer_time: f32) -> Self {
+        let host = cpal::default_host();
+
+        let device = host.default_output_device().expect("no output device available");
+
+        let mut config = device.supported_output_configs().unwrap()
+            .find(|p| p.channels() == 2).unwrap();
+
+        let sample_rate = config.min_sample_rate();
+
+        let mut config = config
+            .with_sample_rate(sample_rate)
+            .config();
+
+        config.buffer_size = BufferSize::Fixed(sample_rate.0 * 2);
+
+        let channels = config.channels.into();
+
+        let mut buffer = Arc::new(Mutex::new(RingBuffer::with_default((sample_rate.0 as f32 * playback_buffer_time) as usize * 2)));
+        let internal_buffer = buffer.clone();
+
+        //TODO: deal with other output formats (i16 and u16)?
+
+        let stream = device.build_output_stream(
+            &config,
+            move |data: &mut [f32], info| {
+                let mut buffer = internal_buffer.lock().unwrap();
+                let (l, r) = buffer.read(data.len());
+
+                let read_data = l.into_iter()
+                    .chain(r.into_iter());
+
+                for (sample, read) in data.iter_mut().zip(read_data) {
+                    *sample = Sample::from_sample(*read);
                 }
-                Some(d_sound) => {
-                    let channels: u16 = 2;
-                    let bits_per_sample: u16 = 16;
-                    let mut wave_format = WAVEFORMATEX {
-                        wFormatTag: WAVE_FORMAT_PCM as _,
-                        nChannels: channels,
-                        nSamplesPerSec: samples_per_second,
-                        nAvgBytesPerSec: samples_per_second * channels as u32 * bits_per_sample as u32 / 8,
-                        wBitsPerSample: bits_per_sample as _,
-                        nBlockAlign: channels * bits_per_sample / 8,
-                        ..Default::default()
-                    };
+            },
+            |err| {
+                println!("{}", err);
+            },
+            None,
+        ).unwrap();
 
-                    match d_sound.SetCooperativeLevel(window, DSSCL_PRIORITY) {
-                        Err(_) => {
-                            //TODO(voided): Diagnostics
-                        }
-                        Ok(_) => {
-                            //NOTE(voided): "Create" a primary buffer.
-                            let primary_buffer_description = DSBUFFERDESC {
-                                dwSize: mem::size_of::<DSBUFFERDESC>() as u32,
-                                dwFlags: DSBCAPS_PRIMARYBUFFER,
-                                ..Default::default()
-                            };
-                            let mut primary_buffer = None;
-                            match d_sound.CreateSoundBuffer(&primary_buffer_description, &mut primary_buffer, None) {
-                                Err(..) => {
-                                    //TODO(voided): Diagnostics
-                                }
-                                Ok(_) => {
-                                    match &primary_buffer {
-                                        None => {
-                                            //TODO(voided): Diagnostics
-                                        }
-                                        Some(primary_buffer) => {
-                                            match primary_buffer.SetFormat(&wave_format) {
-                                                Err(..) => {
-                                                    //TODO(voided): Diagnostics
-                                                }
-                                                Ok(_) => {
-                                                    println!("{}", "primary buffer created successfully");
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+        stream.play().unwrap();
 
-                    let mut secondary_buffer = None;
-                    let secondary_buffer_description = DSBUFFERDESC {
-                        dwSize: mem::size_of::<DSBUFFERDESC>() as u32,
-                        dwBufferBytes: buffer_size,
-                        lpwfxFormat: &mut wave_format,
-                        ..Default::default()
-                    };
-                    match d_sound.CreateSoundBuffer(&secondary_buffer_description, &mut secondary_buffer, None) {
-                        Err(..) => {
-                            //TODO(voided): Diagnostics
-                        }
-                        Ok(_) => {
-                            match &secondary_buffer {
-                                None => {
-                                    //TODO(voided): Diagnostics
-                                }
-                                Some(secondary_buffer) => {
-                                    println!("{}", "secondary buffer created successfully");
-                                }
-                            }
-                        }
-                    }
-                }
-
-                //NOTE(voided): "Create" a secondary buffer.
-
-                //NOTE(voided): Start it playing!
-            }
+        Self {
+            host,
+            buffer,
+            sample_rate: sample_rate.0,
+            stream,
+            channels,
         }
     }
 }
@@ -380,6 +354,8 @@ fn main() -> Result<()> {
             }
         }
 
+        let mut audio = AudioOutput::new(2.0);
+
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
         let instance = GetModuleHandleW(None)?;
@@ -415,12 +391,16 @@ fn main() -> Result<()> {
             None,
         );
 
-        init_d_sound(window, 48000 * mem::size_of::<i16>() as u32 * 2, 48000);
-
         RUN_STATE = RunState::Running;
         let mut message = MSG::default();
         let mut x_offset = 0;
         let mut y_offset = 0;
+        let hz = 256;
+        let mut running_sample_index: u32 = 0;
+
+        // if let Some((_, secondary_buffer)) = &d_sound {
+        //     secondary_buffer.Play(0, 0, DSBPLAY_LOOPING).expect("TODO: panic message");
+        // }
 
         while RUN_STATE != RunState::Stopping {
             while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
@@ -451,8 +431,7 @@ fn main() -> Result<()> {
                         let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
                         let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
                         let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-                        let shoulder_left =
-                            (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+                        let shoulder_left = (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
                         let shoulder_right =
                             (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
                         let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
@@ -476,6 +455,25 @@ fn main() -> Result<()> {
 
             render_weird_gradient(&GLOBAL_BACK_BUFFER, x_offset, y_offset);
 
+            let sample_rate = audio.sample_rate;
+            let square_wave_period = sample_rate / hz;
+
+
+            let mut buffer = audio.buffer.lock().unwrap();
+            let bytes_to_write = buffer.space();
+            let (l, r) = buffer.write_buffers(bytes_to_write);
+            for s in l.iter_mut().chain(r.iter_mut()) {
+                let volume = if running_sample_index / 2 % square_wave_period > square_wave_period / 2 {
+                    0.1
+                } else {
+                    -0.1
+                };
+
+                *s = volume;
+                running_sample_index += 1;
+            }
+
+
             let device_context = GetDC(window);
             let (window_width, window_height) = window_dimension(window);
 
@@ -492,6 +490,8 @@ fn main() -> Result<()> {
 
             x_offset += 1;
         }
+
+        let audio = audio;
 
         Ok(())
     }
