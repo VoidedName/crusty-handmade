@@ -1,33 +1,23 @@
 use std::ffi::c_void;
 use std::fmt::Debug;
-use std::hash::Hash;
 use std::mem;
 use std::ptr::null_mut;
-use std::sync::{Arc, Mutex};
-use std::sync::mpsc::{channel, Sender};
 
-use cpal::{BufferSize, Host, Sample, SampleFormat, SampleRate, Stream};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use windows::Win32::System::Memory::{
+    VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
-use windows::Win32::System::Memory::{
-    MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE, VirtualAlloc, VirtualFree,
-};
-use windows::Win32::UI::Input::KeyboardAndMouse::*;
 
+use crate::audio::AudioOutput;
 use crate::x_input::*;
 
-mod x_input;
+mod audio;
 mod ring_buffer;
-
-#[derive(Eq, PartialEq, Copy, Clone, Debug)]
-pub enum RunState {
-    Starting,
-    Running,
-    Stopping,
-}
+mod x_input;
 
 ///Declares a static mut! Allows to search for specifically global muts
 macro_rules! global_mut {
@@ -37,7 +27,13 @@ macro_rules! global_mut {
 }
 
 use global_mut;
-use crate::ring_buffer::RingBuffer;
+
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
+pub enum RunState {
+    Starting,
+    Running,
+    Stopping,
+}
 
 //TODO(voided): This is a global for now.
 global_mut!(RUN_STATE: RunState = RunState::Starting);
@@ -95,71 +91,6 @@ unsafe fn window_dimension(window: HWND) -> (i32, i32) {
     let height = client_rect.bottom - client_rect.top;
 
     (width, height)
-}
-
-struct AudioOutput {
-    host: Host,
-    pub buffer: Arc<Mutex<RingBuffer<f32>>>,
-    pub sample_rate: u32,
-    pub channels: u32,
-    stream: Stream,
-}
-
-//TODO: Deal with disconnected audio etc
-
-impl AudioOutput {
-    pub fn new(playback_buffer_time: f32) -> Self {
-        let host = cpal::default_host();
-
-        let device = host.default_output_device().expect("no output device available");
-
-        let mut config = device.supported_output_configs().unwrap()
-            .find(|p| p.channels() == 2).unwrap();
-
-        let sample_rate = config.min_sample_rate();
-
-        let mut config = config
-            .with_sample_rate(sample_rate)
-            .config();
-
-        config.buffer_size = BufferSize::Fixed(sample_rate.0 * 2);
-
-        let channels = config.channels.into();
-
-        let mut buffer = Arc::new(Mutex::new(RingBuffer::with_default((sample_rate.0 as f32 * playback_buffer_time) as usize * 2)));
-        let internal_buffer = buffer.clone();
-
-        //TODO: deal with other output formats (i16 and u16)?
-
-        let stream = device.build_output_stream(
-            &config,
-            move |data: &mut [f32], info| {
-                let mut buffer = internal_buffer.lock().unwrap();
-                let (l, r) = buffer.read(data.len());
-
-                let read_data = l.into_iter()
-                    .chain(r.into_iter());
-
-                for (sample, read) in data.iter_mut().zip(read_data) {
-                    *sample = Sample::from_sample(*read);
-                }
-            },
-            |err| {
-                println!("{}", err);
-            },
-            None,
-        ).unwrap();
-
-        stream.play().unwrap();
-
-        Self {
-            host,
-            buffer,
-            sample_rate: sample_rate.0,
-            stream,
-            channels,
-        }
-    }
 }
 
 unsafe fn render_weird_gradient(buffer: &OffscreenBuffer, x_offset: i32, y_offest: i32) {
@@ -354,7 +285,7 @@ fn main() -> Result<()> {
             }
         }
 
-        let mut audio = AudioOutput::new(2.0);
+        let audio = AudioOutput::new(2.0);
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
@@ -458,21 +389,20 @@ fn main() -> Result<()> {
             let sample_rate = audio.sample_rate;
             let square_wave_period = sample_rate / hz;
 
-
             let mut buffer = audio.buffer.lock().unwrap();
             let bytes_to_write = buffer.space();
             let (l, r) = buffer.write_buffers(bytes_to_write);
             for s in l.iter_mut().chain(r.iter_mut()) {
-                let volume = if running_sample_index / 2 % square_wave_period > square_wave_period / 2 {
-                    0.1
-                } else {
-                    -0.1
-                };
+                let volume =
+                    if running_sample_index / 2 % square_wave_period > square_wave_period / 2 {
+                        0.1
+                    } else {
+                        -0.1
+                    };
 
                 *s = volume;
                 running_sample_index += 1;
             }
-
 
             let device_context = GetDC(window);
             let (window_width, window_height) = window_dimension(window);
@@ -490,8 +420,6 @@ fn main() -> Result<()> {
 
             x_offset += 1;
         }
-
-        let audio = audio;
 
         Ok(())
     }
