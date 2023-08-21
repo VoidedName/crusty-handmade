@@ -1,3 +1,4 @@
+use std::arch::x86_64::{__rdtscp, _rdtsc};
 use std::f32::consts::PI;
 use std::ffi::c_void;
 use std::fmt::Debug;
@@ -12,6 +13,7 @@ use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
+use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
 use crate::audio::AudioOutput;
 use crate::x_input::*;
@@ -333,8 +335,13 @@ fn main() -> Result<()> {
         // if let Some((_, secondary_buffer)) = &d_sound {
         //     secondary_buffer.Play(0, 0, DSBPLAY_LOOPING).expect("TODO: panic message");
         // }
+        let mut performance_frequency = Default::default();
+        QueryPerformanceFrequency(&mut performance_frequency).ok();
 
+        let mut last_performance_counter = Default::default();
+        QueryPerformanceCounter(&mut last_performance_counter).ok();
         while RUN_STATE != RunState::Stopping {
+
             while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
                 if message.message == WM_QUIT {
                     RUN_STATE = RunState::Stopping;
@@ -349,6 +356,7 @@ fn main() -> Result<()> {
             //TODO(voided): Should we poll this more frequently.
 
             let mut controller_state = XINPUT_STATE::default();
+            let mut last_rdtsc = _rdtsc();
             loop {
                 for controller_index in 0..XUSER_MAX_COUNT {
                     let result = XInputGetState(controller_index, &mut controller_state);
@@ -417,6 +425,26 @@ fn main() -> Result<()> {
             ReleaseDC(window, device_context);
 
             x_offset += 1;
+
+            let mut end_rdtsc = _rdtsc();
+
+            let cycles_elapsed = end_rdtsc - last_rdtsc;
+            last_rdtsc = end_rdtsc;
+            let mega_cycles_per_frame = cycles_elapsed as f32 / 1_000_000.0;
+
+            let mut end_performance_counter = 0;
+            QueryPerformanceCounter(&mut end_performance_counter).ok();
+
+
+            let counter_elapsed = end_performance_counter - last_performance_counter;
+
+            let nanos_per_frame = (counter_elapsed as f32 * 1_000.0) / performance_frequency as f32;
+
+            let fps = performance_frequency as f32 / counter_elapsed as f32;
+
+            println!("{fps} f\\s\t {nanos_per_frame} ms\\f\t {mega_cycles_per_frame} mc\\f");
+
+            last_performance_counter = end_performance_counter;
         }
 
         Ok(())
