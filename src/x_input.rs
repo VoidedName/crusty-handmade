@@ -66,7 +66,7 @@ type XInputSetState__ = unsafe fn(
     /* in: dwUserIndex */ WORD,
     /* in out: pVibration */ *mut XINPUT_VIBRATION,
 ) -> WORD;
-global_mut!(XInputSetState: XInputSetState__ = XInputSetState__Stub);
+global_mut!(XINPUT_SET_STATE: XInputSetState__ = XInputSetState__Stub);
 fn XInputSetState__Stub(_: WORD, _: *mut XINPUT_VIBRATION) -> WORD {
     ERROR_DEVICE_NOT_CONNECTED.0
 }
@@ -74,7 +74,7 @@ fn XInputSetState__Stub(_: WORD, _: *mut XINPUT_VIBRATION) -> WORD {
 ///[`XInputGetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)
 type XInputGetState__ =
     unsafe fn(/* in: dwUserIndex */ WORD, /* out: pState */ *mut XINPUT_STATE) -> WORD;
-global_mut!(XInputGetState: XInputGetState__ = XInputGetState__Stub);
+global_mut!(XINPUT_GET_STATE: XInputGetState__ = XInputGetState__Stub);
 fn XInputGetState__Stub(_: WORD, _: *mut XINPUT_STATE) -> WORD {
     ERROR_DEVICE_NOT_CONNECTED.0
 }
@@ -92,8 +92,8 @@ pub fn load_xinput() -> Option<()> {
                 return if xinput_get_state.is_none() || xinput_set_state.is_none() {
                     None
                 } else {
-                    XInputGetState = mem::transmute(xinput_get_state.unwrap());
-                    XInputSetState = mem::transmute(xinput_set_state.unwrap());
+                    XINPUT_GET_STATE = mem::transmute(xinput_get_state.unwrap());
+                    XINPUT_SET_STATE = mem::transmute(xinput_set_state.unwrap());
                     Some(())
                 };
             }

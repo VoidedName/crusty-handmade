@@ -1,4 +1,4 @@
-use std::arch::x86_64::{__rdtscp, _rdtsc};
+use std::arch::x86_64::{_rdtsc};
 use std::f32::consts::PI;
 use std::ffi::c_void;
 use std::fmt::Debug;
@@ -335,6 +335,8 @@ fn main() -> Result<()> {
         // if let Some((_, secondary_buffer)) = &d_sound {
         //     secondary_buffer.Play(0, 0, DSBPLAY_LOOPING).expect("TODO: panic message");
         // }
+        let mut last_rdtsc = _rdtsc();
+
         let mut performance_frequency = Default::default();
         QueryPerformanceFrequency(&mut performance_frequency).ok();
 
@@ -356,30 +358,44 @@ fn main() -> Result<()> {
             //TODO(voided): Should we poll this more frequently.
 
             let mut controller_state = XINPUT_STATE::default();
-            let mut last_rdtsc = _rdtsc();
             loop {
                 for controller_index in 0..XUSER_MAX_COUNT {
-                    let result = XInputGetState(controller_index, &mut controller_state);
+                    let result = XINPUT_GET_STATE(controller_index, &mut controller_state);
                     if result == ERROR_SUCCESS.0 {
                         //Note(voided): Controller is plugged in.
                         //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
                         let gamepad = &controller_state.Gamepad;
 
+                        #[allow(unused)]
                         let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
+                        #[allow(unused)]
                         let keypad_down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
+                        #[allow(unused)]
                         let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                        #[allow(unused)]
                         let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
+                        #[allow(unused)]
                         let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+                        #[allow(unused)]
                         let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+                        #[allow(unused)]
+                            #[allow(unused)]
                         let shoulder_left = (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+                        #[allow(unused)]
                         let shoulder_right =
                             (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+                        #[allow(unused)]
                         let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
+                        #[allow(unused)]
                         let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
+                        #[allow(unused)]
                         let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
+                        #[allow(unused)]
                         let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
 
+                        #[allow(unused)]
                         let stick_x = gamepad.sThumbLX;
+                        #[allow(unused)]
                         let stick_y = gamepad.sThumbLY;
 
                         if button_a {
@@ -426,7 +442,7 @@ fn main() -> Result<()> {
 
             x_offset += 1;
 
-            let mut end_rdtsc = _rdtsc();
+            let end_rdtsc = _rdtsc();
 
             let cycles_elapsed = end_rdtsc - last_rdtsc;
             last_rdtsc = end_rdtsc;

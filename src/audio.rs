@@ -1,4 +1,3 @@
-use std::default::Default;
 use std::iter::repeat;
 use std::sync::{Arc, Mutex};
 
@@ -7,6 +6,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::ring_buffer::RingBuffer;
 
+#[allow(unused)]
 pub struct AudioOutput {
     host: Host,
     pub buffer: Arc<Mutex<RingBuffer<f32>>>,

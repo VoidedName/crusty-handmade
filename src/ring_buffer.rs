@@ -92,7 +92,7 @@ impl<T> RingBuffer<T> {
             let remainder = amount - left.len();
             let right = &self.buffer[0..min(remainder, self.tail)];
 
-            self.head += (left.len() + right.len());
+            self.head += left.len() + right.len();
             self.head %= self.capacity;
 
             (left, right)
