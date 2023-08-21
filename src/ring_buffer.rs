@@ -13,7 +13,6 @@ pub struct RingBuffer<T> {
     len: usize,
 }
 
-
 impl<T: Default> RingBuffer<T> {
     pub fn with_default(capacity: usize) -> Self {
         Self::new(capacity, Default::default)
@@ -21,7 +20,10 @@ impl<T: Default> RingBuffer<T> {
 }
 
 impl<T> RingBuffer<T> {
-    pub fn new<F>(capacity: usize, mut fill: F) -> Self where F: FnMut() -> T {
+    pub fn new<F>(capacity: usize, mut fill: F) -> Self
+    where
+        F: FnMut() -> T,
+    {
         let mut buffer = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             buffer.push(fill());
@@ -366,7 +368,6 @@ mod ring_buffer_tests {
         l.fill(3);
         r.fill(-3);
         assert_eq!(buffer.buffer, Vec::from([1, 1, 2, 2, 2, 2, 2, 3, 3, 0]));
-
 
         let (l, r) = buffer.read(5);
         assert_eq!(Vec::from(l), [1, 1, 2, 2, 2]);

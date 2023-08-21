@@ -1,3 +1,4 @@
+use std::f32::consts::PI;
 use std::ffi::c_void;
 use std::fmt::Debug;
 use std::mem;
@@ -285,7 +286,7 @@ fn main() -> Result<()> {
             }
         }
 
-        let audio = AudioOutput::new(2.0);
+        let audio = AudioOutput::new(2.00);
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
@@ -387,18 +388,15 @@ fn main() -> Result<()> {
             render_weird_gradient(&GLOBAL_BACK_BUFFER, x_offset, y_offset);
 
             let sample_rate = audio.sample_rate;
-            let square_wave_period = sample_rate / hz;
+            let wave_period = sample_rate / hz;
 
             let mut buffer = audio.buffer.lock().unwrap();
             let bytes_to_write = buffer.space();
             let (l, r) = buffer.write_buffers(bytes_to_write);
             for s in l.iter_mut().chain(r.iter_mut()) {
-                let volume =
-                    if running_sample_index / 2 % square_wave_period > square_wave_period / 2 {
-                        0.1
-                    } else {
-                        -0.1
-                    };
+                let wave_progression = running_sample_index / 2 % wave_period;
+
+                let volume = ((wave_progression as f32 / wave_period as f32) * 2.0 * PI).sin();
 
                 *s = volume;
                 running_sample_index += 1;

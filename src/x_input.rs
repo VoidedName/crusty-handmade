@@ -72,9 +72,8 @@ fn XInputSetState__Stub(_: WORD, _: *mut XINPUT_VIBRATION) -> WORD {
 }
 
 ///[`XInputGetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)
-type XInputGetState__ = unsafe fn(
-    /* in: dwUserIndex */ WORD, /* out: pState */ *mut XINPUT_STATE
-) -> WORD;
+type XInputGetState__ =
+    unsafe fn(/* in: dwUserIndex */ WORD, /* out: pState */ *mut XINPUT_STATE) -> WORD;
 global_mut!(XInputGetState: XInputGetState__ = XInputGetState__Stub);
 fn XInputGetState__Stub(_: WORD, _: *mut XINPUT_STATE) -> WORD {
     ERROR_DEVICE_NOT_CONNECTED.0

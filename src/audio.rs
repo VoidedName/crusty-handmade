@@ -1,3 +1,12 @@
+use std::default::Default;
+use std::iter::repeat;
+use std::sync::{Arc, Mutex};
+
+use cpal::{BufferSize, Host, Sample, Stream};
+use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+use crate::ring_buffer::RingBuffer;
+
 pub struct AudioOutput {
     host: Host,
     pub buffer: Arc<Mutex<RingBuffer<f32>>>,
@@ -26,13 +35,13 @@ impl AudioOutput {
 
         let mut config = config.with_sample_rate(sample_rate).config();
 
-        config.buffer_size = BufferSize::Fixed(sample_rate.0 * 2);
-
         let channels = config.channels.into();
 
-        let buffer = Arc::new(Mutex::new(RingBuffer::with_default(
-            (sample_rate.0 as f32 * playback_buffer_time) as usize * 2,
-        )));
+        let buffers_size = (sample_rate.0 as f32 * playback_buffer_time) as usize * 2;
+
+        let buffer = Arc::new(Mutex::new(RingBuffer::with_default(buffers_size)));
+
+        config.buffer_size = BufferSize::Fixed(buffers_size as u32);
         let internal_buffer = buffer.clone();
 
         //TODO: deal with other output formats (i16 and u16)?
@@ -44,7 +53,7 @@ impl AudioOutput {
                     let mut buffer = internal_buffer.lock().unwrap();
                     let (l, r) = buffer.read(data.len());
 
-                    let read_data = l.into_iter().chain(r.into_iter());
+                    let read_data = l.into_iter().chain(r.into_iter()).chain(repeat(&0.0f32));
 
                     for (sample, read) in data.iter_mut().zip(read_data) {
                         *sample = Sample::from_sample(*read);
@@ -53,7 +62,7 @@ impl AudioOutput {
                 |err| {
                     println!("{}", err);
                 },
-                None,
+                None
             )
             .unwrap();
 
@@ -68,4 +77,3 @@ impl AudioOutput {
         }
     }
 }
-
