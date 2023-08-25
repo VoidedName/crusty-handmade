@@ -1,3 +1,4 @@
+#![allow(unused)]
 // offer an intermediate buffer (or iterator)
 // that represents the sound to play in the future
 

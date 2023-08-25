@@ -1,26 +1,46 @@
-use std::arch::x86_64::{_rdtsc};
-use std::f32::consts::PI;
 use std::ffi::c_void;
 use std::fmt::Debug;
 use std::mem;
 use std::ptr::null_mut;
 
+use platform::platform_main;
 use windows::Win32::System::Memory::{
     VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, PAGE_READWRITE,
 };
+use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::{
     core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
-use windows::Win32::System::Performance::{QueryPerformanceCounter, QueryPerformanceFrequency};
 
-use crate::audio::AudioOutput;
+use crate::audio::{AudioOutput, SineAudioSource, ThreadSharedAudioSource};
 use crate::x_input::*;
 
 mod audio;
 mod ring_buffer;
 mod x_input;
+
+mod platform;
+mod crusty_handmade;
+
+/*
+TODO(voided): This is not a final platform layer!!!
+- save game locations
+- getting a handle to our own executable file
+- asset loading path
+- threading
+- raw input (support for multiple keyboards)
+- sleep/timeBeginPeriod
+- ClipCursor
+- Fullscreen
+- setcursor
+- QueryCancelAutoPlay
+- wm actiave app
+- blit speed improvement
+- hardware acceleration
+- get keyboard layout (international wasd)
+ */
 
 ///Declares a static mut! Allows to search for specifically global muts
 macro_rules! global_mut {
@@ -29,6 +49,7 @@ macro_rules! global_mut {
     };
 }
 
+use crate::crusty_handmade::game_update_and_render;
 use global_mut;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -169,6 +190,8 @@ unsafe fn display_buffer_in_window(
     );
 }
 
+/// # Safety
+/// this is a system api call
 pub unsafe extern "system" fn window_procedure(
     window: HWND,
     message: u32,
@@ -176,6 +199,7 @@ pub unsafe extern "system" fn window_procedure(
     l_param: LPARAM,
 ) -> LRESULT {
     let mut result: LRESULT = LRESULT(0);
+
     match message {
         WM_ACTIVATEAPP => {
             println!("WM_ACTIVATEAPP");
@@ -278,17 +302,22 @@ pub unsafe extern "system" fn window_procedure(
 }
 
 fn main() -> Result<()> {
+    platform_main();
+
+
     unsafe {
         {
             let x_input = load_xinput();
-            if let None = x_input {
+            if x_input.is_none() {
                 println!("Failed to load XINPUT. No controller support!");
             } else {
                 println!("Loaded XINPUT. Controller support enabled!");
             }
         }
 
-        let audio = AudioOutput::new(2.00);
+        let audio_source = SineAudioSource::new(255, 0.5);
+        let audio_source = ThreadSharedAudioSource::new(audio_source);
+        let _audio = AudioOutput::new(audio_source.clone());
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
@@ -329,13 +358,9 @@ fn main() -> Result<()> {
         let mut message = MSG::default();
         let mut x_offset = 0;
         let mut y_offset = 0;
-        let hz = 256;
-        let mut running_sample_index: u32 = 0;
+        let mut hz = 256;
 
-        // if let Some((_, secondary_buffer)) = &d_sound {
-        //     secondary_buffer.Play(0, 0, DSBPLAY_LOOPING).expect("TODO: panic message");
-        // }
-        let mut last_rdtsc = _rdtsc();
+        //let mut last_rdtsc = _rdtsc();
 
         let mut performance_frequency = Default::default();
         QueryPerformanceFrequency(&mut performance_frequency).ok();
@@ -343,7 +368,6 @@ fn main() -> Result<()> {
         let mut last_performance_counter = Default::default();
         QueryPerformanceCounter(&mut last_performance_counter).ok();
         while RUN_STATE != RunState::Stopping {
-
             while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
                 if message.message == WM_QUIT {
                     RUN_STATE = RunState::Stopping;
@@ -358,73 +382,68 @@ fn main() -> Result<()> {
             //TODO(voided): Should we poll this more frequently.
 
             let mut controller_state = XINPUT_STATE::default();
-            loop {
-                for controller_index in 0..XUSER_MAX_COUNT {
-                    let result = XINPUT_GET_STATE(controller_index, &mut controller_state);
-                    if result == ERROR_SUCCESS.0 {
-                        //Note(voided): Controller is plugged in.
-                        //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
-                        let gamepad = &controller_state.Gamepad;
+            for controller_index in 0..XUSER_MAX_COUNT {
+                let result = XINPUT_GET_STATE(controller_index, &mut controller_state);
+                if result == ERROR_SUCCESS.0 {
+                    //Note(voided): Controller is plugged in.
+                    //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
+                    let gamepad = &controller_state.Gamepad;
 
-                        #[allow(unused)]
-                        let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
-                        #[allow(unused)]
-                        let keypad_down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
-                        #[allow(unused)]
-                        let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
-                        #[allow(unused)]
-                        let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
-                        #[allow(unused)]
-                        let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-                        #[allow(unused)]
-                        let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-                        #[allow(unused)]
-                            #[allow(unused)]
-                        let shoulder_left = (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
-                        #[allow(unused)]
-                        let shoulder_right =
-                            (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
-                        #[allow(unused)]
-                        let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
-                        #[allow(unused)]
-                        let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
-                        #[allow(unused)]
-                        let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
-                        #[allow(unused)]
-                        let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
+                    #[allow(unused)]
+                    let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
+                    #[allow(unused)]
+                    let keypad_down = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN) != 0;
+                    #[allow(unused)]
+                    let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
+                    #[allow(unused)]
+                    let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
+                    #[allow(unused)]
+                    let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+                    #[allow(unused)]
+                    let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+                    #[allow(unused)]
+                    let shoulder_left = (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
+                    #[allow(unused)]
+                    let shoulder_right = (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
+                    #[allow(unused)]
+                    let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
+                    #[allow(unused)]
+                    let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
+                    #[allow(unused)]
+                    let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
+                    #[allow(unused)]
+                    let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
 
-                        #[allow(unused)]
-                        let stick_x = gamepad.sThumbLX;
-                        #[allow(unused)]
-                        let stick_y = gamepad.sThumbLY;
+                    #[allow(unused)]
+                    let stick_x = gamepad.sThumbLX;
+                    #[allow(unused)]
+                    let stick_y = gamepad.sThumbLY;
 
-                        if button_a {
-                            y_offset += 1;
-                        }
-                    } else {
-                        //Note(Voided): Controller is not available.
-                    }
+                    //println!("{}, {} - {}, {}", gamepad.sThumbLX, gamepad.sThumbLY, gamepad.sThumbRX, gamepad.sThumbRY);
+
+                    y_offset -= stick_y as i32 / 4096;
+                    x_offset += stick_x as i32 / 4096;
+
+                    hz =
+                        (512 + (256.0 * (stick_y as f32 + stick_x as f32) / 60000.0) as i32) as u32;
+
+                    // println!("{stick_y}, {stick_x}")
+                } else {
+                    //Note(Voided): Controller is not available.
                 }
-
-                break;
             }
+
+            // game_update_and_render();
 
             render_weird_gradient(&GLOBAL_BACK_BUFFER, x_offset, y_offset);
 
-            let sample_rate = audio.sample_rate;
-            let wave_period = sample_rate / hz;
-
-            let mut buffer = audio.buffer.lock().unwrap();
-            let bytes_to_write = buffer.space();
-            let (l, r) = buffer.write_buffers(bytes_to_write);
-            for s in l.iter_mut().chain(r.iter_mut()) {
-                let wave_progression = running_sample_index / 2 % wave_period;
-
-                let volume = ((wave_progression as f32 / wave_period as f32) * 2.0 * PI).sin();
-
-                *s = volume;
-                running_sample_index += 1;
-            }
+            //TODO(voided) sound is very delayed
+            audio_source
+                .source()
+                .lock()
+                .expect("failed to lock source")
+                .hz = hz;
+            // println!("{sample_rate}, {bytes_to_write}, {}, {}", (0.2 * sample_rate as f32 * 2.0) as usize, buffer.len());
 
             let device_context = GetDC(window);
             let (window_width, window_height) = window_dimension(window);
@@ -440,27 +459,24 @@ fn main() -> Result<()> {
 
             ReleaseDC(window, device_context);
 
-            x_offset += 1;
+            // let end_rdtsc = _rdtsc();
 
-            let end_rdtsc = _rdtsc();
-
-            let cycles_elapsed = end_rdtsc - last_rdtsc;
-            last_rdtsc = end_rdtsc;
-            let mega_cycles_per_frame = cycles_elapsed as f32 / 1_000_000.0;
+            // let cycles_elapsed = end_rdtsc - last_rdtsc;
+            // last_rdtsc = end_rdtsc;
+            // let mega_cycles_per_frame = cycles_elapsed as f32 / 1_000_000.0;
 
             let mut end_performance_counter = 0;
             QueryPerformanceCounter(&mut end_performance_counter).ok();
 
+            //let counter_elapsed = end_performance_counter - last_performance_counter;
 
-            let counter_elapsed = end_performance_counter - last_performance_counter;
+            //let nanos_per_frame = (counter_elapsed as f32 * 1_000.0) / performance_frequency as f32;
 
-            let nanos_per_frame = (counter_elapsed as f32 * 1_000.0) / performance_frequency as f32;
+            // let fps = performance_frequency as f32 / counter_elapsed as f32;
 
-            let fps = performance_frequency as f32 / counter_elapsed as f32;
+            // println!("{fps} f\\s\t {nanos_per_frame} ms\\f\t {mega_cycles_per_frame} mc\\f");
 
-            println!("{fps} f\\s\t {nanos_per_frame} ms\\f\t {mega_cycles_per_frame} mc\\f");
-
-            last_performance_counter = end_performance_counter;
+            // last_performance_counter = end_performance_counter;
         }
 
         Ok(())

@@ -1,15 +1,80 @@
-use std::iter::repeat;
+use cpal::Stream;
+use std::f32::consts::PI;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use cpal::{BufferSize, Host, Sample, Stream};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::{BufferSize, Host};
 
-use crate::ring_buffer::RingBuffer;
+pub struct SineAudioSource {
+    pub hz: u32,
+    pub volume: f32,
+    position: f32,
+}
+
+impl AudioSource for SineAudioSource {
+    fn sample(&mut self, sample_rate: u32) -> (f32, f32) {
+        //hz = periods per second
+        //sample_rate = samples per second
+        const PERIOD: f32 = 2.0 * PI;
+        let rate = self.hz as f32 / sample_rate as f32;
+        let step = rate * PERIOD;
+        self.position = (self.position + step) % PERIOD;
+        let value = self.position.sin() * self.volume;
+        (value, value)
+    }
+}
+
+impl SineAudioSource {
+    pub fn new(hz: u32, volume: f32) -> Self {
+        Self {
+            hz,
+            volume,
+            position: 0.0,
+        }
+    }
+}
+
+pub struct ThreadSharedAudioSource<Source: AudioSource> {
+    inner_source: Arc<Mutex<Source>>,
+}
+
+impl<Source: AudioSource> Clone for ThreadSharedAudioSource<Source> {
+    fn clone(&self) -> Self {
+        Self {
+            inner_source: self.inner_source.clone(),
+        }
+    }
+}
+
+impl<Source: AudioSource> AudioSource for ThreadSharedAudioSource<Source> {
+    fn sample(&mut self, sample_rate: u32) -> (f32, f32) {
+        self.inner_source
+            .lock()
+            .expect("failed to sample lock")
+            .sample(sample_rate)
+    }
+}
+
+impl<Source: AudioSource> ThreadSharedAudioSource<Source> {
+    pub fn new(inner_source: Source) -> Self {
+        Self {
+            inner_source: Arc::new(Mutex::new(inner_source)),
+        }
+    }
+
+    pub fn source(&self) -> Arc<Mutex<Source>> {
+        self.inner_source.clone()
+    }
+}
+
+pub trait AudioSource: Send {
+    fn sample(&mut self, sample_rate: u32) -> (f32, f32);
+}
 
 #[allow(unused)]
 pub struct AudioOutput {
     host: Host,
-    pub buffer: Arc<Mutex<RingBuffer<f32>>>,
     pub sample_rate: u32,
     pub channels: u32,
     stream: Stream,
@@ -18,9 +83,9 @@ pub struct AudioOutput {
 //TODO: Deal with disconnected audio etc
 
 impl AudioOutput {
-    pub fn new(playback_buffer_time: f32) -> Self {
+    pub fn new<Source: AudioSource + 'static>(source: Source) -> Self {
         let host = cpal::default_host();
-
+        let mut source = source;
         let device = host
             .default_output_device()
             .expect("no output device available");
@@ -37,12 +102,9 @@ impl AudioOutput {
 
         let channels = config.channels.into();
 
-        let buffers_size = (sample_rate.0 as f32 * playback_buffer_time) as usize * 2;
+        let buffers_size = ((sample_rate.0 * 2) as f32 * 0.005) as u32;
 
-        let buffer = Arc::new(Mutex::new(RingBuffer::with_default(buffers_size)));
-
-        config.buffer_size = BufferSize::Fixed(buffers_size as u32);
-        let internal_buffer = buffer.clone();
+        config.buffer_size = BufferSize::Fixed(buffers_size);
 
         //TODO: deal with other output formats (i16 and u16)?
 
@@ -50,19 +112,18 @@ impl AudioOutput {
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _info| {
-                    let mut buffer = internal_buffer.lock().unwrap();
-                    let (l, r) = buffer.read(data.len());
+                    // println!("{}", start_stream.elapsed().as_secs_f32());
+                    for d in data.chunks_mut(2) {
+                        let (l, r) = source.sample(sample_rate.0);
 
-                    let read_data = l.into_iter().chain(r.into_iter()).chain(repeat(&0.0f32));
-
-                    for (sample, read) in data.iter_mut().zip(read_data) {
-                        *sample = Sample::from_sample(*read);
+                        d[0] = l;
+                        d[1] = r;
                     }
                 },
                 |err| {
                     println!("{}", err);
                 },
-                None
+                Some(Duration::from_secs_f64(0.01)),
             )
             .unwrap();
 
@@ -70,7 +131,6 @@ impl AudioOutput {
 
         Self {
             host,
-            buffer,
             sample_rate: sample_rate.0,
             stream,
             channels,

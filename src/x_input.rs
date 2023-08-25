@@ -9,8 +9,9 @@ use windows::Win32::Foundation::ERROR_DEVICE_NOT_CONNECTED;
 use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 
 type BYTE = u8;
-type SHORT = u16;
-type WORD = u32;
+type SHORT = i16;
+type WORD = u16;
+type DWORD = u32;
 
 pub const XINPUT_GAMEPAD_DPAD_UP: WORD = 0x0001;
 pub const XINPUT_GAMEPAD_DPAD_DOWN: WORD = 0x0002;
@@ -27,14 +28,14 @@ pub const XINPUT_GAMEPAD_B: WORD = 0x2000;
 pub const XINPUT_GAMEPAD_X: WORD = 0x4000;
 pub const XINPUT_GAMEPAD_Y: WORD = 0x8000;
 
-pub const XUSER_MAX_COUNT: WORD = 4;
+pub const XUSER_MAX_COUNT: DWORD = 4;
 
 //noinspection ALL
 ///[`XINPUT_STATE`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/ns-xinput-xinput_state)
 #[repr(C)]
 #[derive(Default)]
 pub struct XINPUT_STATE {
-    pub dwPacketNumber: WORD,
+    pub dwPacketNumber: DWORD,
     pub Gamepad: XINPUT_GAMEPAD,
 }
 
@@ -63,19 +64,19 @@ pub struct XINPUT_VIBRATION {
 
 ///[`XInputSetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputsetstate)
 type XInputSetState__ = unsafe fn(
-    /* in: dwUserIndex */ WORD,
+    /* in: dwUserIndex */ DWORD,
     /* in out: pVibration */ *mut XINPUT_VIBRATION,
-) -> WORD;
+) -> DWORD;
 global_mut!(XINPUT_SET_STATE: XInputSetState__ = XInputSetState__Stub);
-fn XInputSetState__Stub(_: WORD, _: *mut XINPUT_VIBRATION) -> WORD {
+fn XInputSetState__Stub(_: DWORD, _: *mut XINPUT_VIBRATION) -> DWORD {
     ERROR_DEVICE_NOT_CONNECTED.0
 }
 
 ///[`XInputGetState`](https://learn.microsoft.com/en-us/windows/win32/api/xinput/nf-xinput-xinputgetstate)
 type XInputGetState__ =
-    unsafe fn(/* in: dwUserIndex */ WORD, /* out: pState */ *mut XINPUT_STATE) -> WORD;
+    unsafe fn(/* in: dwUserIndex */ DWORD, /* out: pState */ *mut XINPUT_STATE) -> DWORD;
 global_mut!(XINPUT_GET_STATE: XInputGetState__ = XInputGetState__Stub);
-fn XInputGetState__Stub(_: WORD, _: *mut XINPUT_STATE) -> WORD {
+fn XInputGetState__Stub(_: DWORD, _: *mut XINPUT_STATE) -> DWORD {
     ERROR_DEVICE_NOT_CONNECTED.0
 }
 
