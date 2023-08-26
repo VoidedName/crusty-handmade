@@ -6,6 +6,37 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Host};
 
+use crate::ring_buffer::RingBuffer;
+
+pub struct BufferAudioSource {
+    pub buffer: RingBuffer<f32>,
+    sample_rate: Option<u32>,
+}
+
+impl AudioSource for BufferAudioSource {
+    fn sample(&mut self, sample_rate: u32) -> (f32, f32) {
+        self.sample_rate = Some(sample_rate);
+        let (l, r) = self.buffer.read(2);
+        let mut iter = l.iter().chain(r.iter());
+        let a = *iter.next().unwrap_or(&0.0);
+        let b = *iter.next().unwrap_or(&0.0);
+        (a, b)
+    }
+}
+
+impl BufferAudioSource {
+    pub fn new(buffer: RingBuffer<f32>) -> Self {
+        Self {
+            buffer,
+            sample_rate: None,
+        }
+    }
+
+    pub fn sample_rate(&self) -> Option<u32> {
+        self.sample_rate
+    }
+}
+
 pub struct SineAudioSource {
     pub hz: u32,
     pub volume: f32,
@@ -26,7 +57,7 @@ impl AudioSource for SineAudioSource {
 }
 
 impl SineAudioSource {
-    pub fn new(hz: u32, volume: f32) -> Self {
+    pub const fn new(hz: u32, volume: f32) -> Self {
         Self {
             hz,
             volume,
@@ -112,7 +143,6 @@ impl AudioOutput {
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _info| {
-                    // println!("{}", start_stream.elapsed().as_secs_f32());
                     for d in data.chunks_mut(2) {
                         let (l, r) = source.sample(sample_rate.0);
 

@@ -1,11 +1,9 @@
-
-
 mod audio;
 mod ring_buffer;
 mod x_input;
 
-mod platform;
 mod crusty_handmade;
+mod platform;
 
 /*
 TODO(voided): This is not a final platform layer!!!
@@ -35,7 +33,6 @@ macro_rules! global_mut {
 use crate::crusty_handmade::{game_update_and_render, GameOffscreenBuffer};
 use global_mut;
 use platform::platform_main;
-
 
 fn main() {
     platform_main();

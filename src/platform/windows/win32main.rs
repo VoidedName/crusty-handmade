@@ -1,5 +1,9 @@
+use crate::audio::BufferAudioSource;
+use crate::crusty_handmade::GameSoundBuffer;
 use crate::game_update_and_render;
+use crate::ring_buffer::RingBuffer;
 use crate::GameOffscreenBuffer;
+use std::arch::x86_64::_rdtsc;
 use std::ffi::c_void;
 use std::fmt::Debug;
 use std::mem;
@@ -16,8 +20,8 @@ use windows::{
 };
 
 use crate::audio::{AudioOutput, SineAudioSource, ThreadSharedAudioSource};
-use crate::x_input::*;
 use crate::global_mut;
+use crate::x_input::*;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum RunState {
@@ -251,7 +255,6 @@ pub unsafe extern "system" fn window_procedure(
     result
 }
 
-
 pub fn win32main() {
     unsafe {
         {
@@ -263,9 +266,10 @@ pub fn win32main() {
             }
         }
 
-        let audio_source = SineAudioSource::new(255, 0.5);
+        let audio_source = BufferAudioSource::new(RingBuffer::with_default(48000*2));
         let audio_source = ThreadSharedAudioSource::new(audio_source);
         let _audio = AudioOutput::new(audio_source.clone());
+        let mut sound_buffer_mem = vec![0.0; 48000*2];
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
@@ -308,7 +312,7 @@ pub fn win32main() {
         let mut y_offset = 0;
         let mut hz = 256;
 
-        //let mut last_rdtsc = _rdtsc();
+        let mut last_rdtsc = _rdtsc();
 
         let mut performance_frequency = Default::default();
         QueryPerformanceFrequency(&mut performance_frequency).ok();
@@ -367,15 +371,10 @@ pub fn win32main() {
                     #[allow(unused)]
                     let stick_y = gamepad.sThumbLY;
 
-                    //println!("{}, {} - {}, {}", gamepad.sThumbLX, gamepad.sThumbLY, gamepad.sThumbRX, gamepad.sThumbRY);
-
                     y_offset -= stick_y as i32 / 4096;
                     x_offset += stick_x as i32 / 4096;
 
-                    hz =
-                        (512 + (256.0 * (stick_y as f32 + stick_x as f32) / 60000.0) as i32) as u32;
-
-                    // println!("{stick_y}, {stick_x}")
+                    hz = (512 + (256.0 * (stick_y as f32 + stick_x as f32) / 60000.0) as i32) as u32;
                 } else {
                     //Note(Voided): Controller is not available.
                 }
@@ -388,14 +387,24 @@ pub fn win32main() {
                 height: GLOBAL_BACK_BUFFER.height,
                 bytes_per_pixel: GLOBAL_BACK_BUFFER.bytes_per_pixel,
             };
-            game_update_and_render(&mut buffer, x_offset, y_offset);
+
+            let s = audio_source.source();
+            let mut s = s.lock().expect("failed to lock source");
+            let rate = s.sample_rate().unwrap_or(0);
+            let to_fill = ((rate as usize / 30) * 2) - s.buffer.len();
+            let sound_buffer_mem = &mut sound_buffer_mem[0..to_fill]; 
+            let mut sound_buffer = GameSoundBuffer {
+                buffer: sound_buffer_mem,
+                samples_rate: rate,
+            };
+            game_update_and_render(&mut buffer, x_offset, y_offset, &mut sound_buffer, hz);
+            
+            let (l, r) = s.buffer.write_buffers(to_fill);
+            for (t, s) in l.iter_mut().chain(r.iter_mut()).zip(sound_buffer_mem.iter()) {
+                *t = *s;
+            }
 
             //TODO(voided) sound is very delayed
-            audio_source
-                .source()
-                .lock()
-                .expect("failed to lock source")
-                .hz = hz;
             // println!("{sample_rate}, {bytes_to_write}, {}, {}", (0.2 * sample_rate as f32 * 2.0) as usize, buffer.len());
 
             let device_context = GetDC(window);
@@ -412,24 +421,24 @@ pub fn win32main() {
 
             ReleaseDC(window, device_context);
 
-            // let end_rdtsc = _rdtsc();
+            let end_rdtsc = _rdtsc();
 
-            // let cycles_elapsed = end_rdtsc - last_rdtsc;
-            // last_rdtsc = end_rdtsc;
-            // let mega_cycles_per_frame = cycles_elapsed as f32 / 1_000_000.0;
+            let cycles_elapsed = end_rdtsc - last_rdtsc;
+            last_rdtsc = end_rdtsc;
+            let mega_cycles_per_frame = cycles_elapsed as f32 / 1_000_000.0;
 
             let mut end_performance_counter = 0;
             QueryPerformanceCounter(&mut end_performance_counter).ok();
 
-            //let counter_elapsed = end_performance_counter - last_performance_counter;
+            let counter_elapsed = end_performance_counter - last_performance_counter;
 
-            //let nanos_per_frame = (counter_elapsed as f32 * 1_000.0) / performance_frequency as f32;
+            let nanos_per_frame = (counter_elapsed as f32 * 1_000.0) / performance_frequency as f32;
 
-            // let fps = performance_frequency as f32 / counter_elapsed as f32;
+            let fps = performance_frequency as f32 / counter_elapsed as f32;
 
-            // println!("{fps} f\\s\t {nanos_per_frame} ms\\f\t {mega_cycles_per_frame} mc\\f");
+            println!("{fps} f\\s\t {nanos_per_frame} ms\\f\t {mega_cycles_per_frame} mc\\f");
 
-            // last_performance_counter = end_performance_counter;
+            last_performance_counter = end_performance_counter;
         }
     }
 }
