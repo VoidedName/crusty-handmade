@@ -1,31 +1,12 @@
-use crate::audio::{AudioSource, BufferAudioSource};
+use crate::audio::AudioSource;
+use crate::audio::SineAudioSource;
+use crate::crusty_handmade::types::GameOffscreenBuffer;
+use crate::crusty_handmade::types::GameSoundBuffer;
 use crate::global_mut;
-use crate::{audio::SineAudioSource, ring_buffer::RingBuffer};
-use itertools::Itertools;
-use std::ffi::c_void;
 
-pub struct GameOffscreenBuffer {
-    pub memory: *mut c_void,
-    pub width: i32,
-    pub height: i32,
-    pub bytes_per_pixel: i32,
-}
+use self::types::GameInput;
 
-impl GameOffscreenBuffer {
-    pub fn pitch(&self) -> isize {
-        (self.width * self.bytes_per_pixel) as isize
-    }
-
-    #[allow(unused)]
-    pub fn memory_size(&self) -> i32 {
-        self.bytes_per_pixel * self.width * self.height
-    }
-}
-
-pub struct GameSoundBuffer<'a> {
-    pub samples_rate: u32,
-    pub buffer: &'a mut [f32],
-}
+pub mod types;
 
 unsafe fn render_weird_gradient(buffer: &mut GameOffscreenBuffer, x_offset: i32, y_offset: i32) {
     let mut row = buffer.memory.cast::<u8>();
@@ -50,9 +31,8 @@ global_mut!(Y_OFFSET: i32 = 0);
 
 unsafe fn game_output_sounde(buffer: &mut GameSoundBuffer) {
     let rate = buffer.samples_rate;
-    OUT.volume = 1.0;
 
-    for mut chunk in buffer.buffer.chunks_mut(2) {
+    for chunk in buffer.buffer.chunks_mut(2) {
         let (sl, sr) = OUT.sample(rate);
         chunk[0] = sl;
         chunk[1] = sr;
@@ -64,16 +44,26 @@ unsafe fn game_output_sounde(buffer: &mut GameSoundBuffer) {
 /// TODO(voided): Services that the game provides to the platform layer
 /// It needs to take the timing, controller/keyboard input, bitmap buffer to use, sound buffer to use
 pub unsafe fn game_update_and_render<'a>(
+    inputs: &'a GameInput,
     buffer: &'a mut GameOffscreenBuffer,
-    x_offset: i32,
-    y_offset: i32,
     sound_buffer: &'a mut GameSoundBuffer,
-    hz: u32,
 ) {
     // TODO(voided): Allow samples offset here for more robust platform options
-    OUT.hz = hz;
-    X_OFFSET = x_offset;
-    Y_OFFSET = y_offset;
+    let input0 = &inputs[0];
+
+    match input0.is_analog {
+        true => {
+            OUT.hz = (256.0 + 128.0 * input0.stick_left.y_axis.end) as u32;
+            X_OFFSET += (4.0 * input0.stick_left.x_axis.end) as i32;
+        }
+        false => {}
+    }
+
+    if input0.button_down.button_is_down {
+        Y_OFFSET += 1;
+    }
+
+    OUT.volume = 0.3;
     game_output_sounde(sound_buffer);
     render_weird_gradient(buffer, X_OFFSET, Y_OFFSET);
 }

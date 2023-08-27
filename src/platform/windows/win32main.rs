@@ -1,9 +1,9 @@
 use crate::audio::BufferAudioSource;
-use crate::crusty_handmade::GameSoundBuffer;
+use crate::crusty_handmade::types::{ButtonInput, GameInput, GameOffscreenBuffer, GameSoundBuffer};
 use crate::game_update_and_render;
 use crate::ring_buffer::RingBuffer;
-use crate::GameOffscreenBuffer;
 use std::arch::x86_64::_rdtsc;
+use std::cmp::max;
 use std::ffi::c_void;
 use std::fmt::Debug;
 use std::mem;
@@ -19,7 +19,7 @@ use windows::{
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
 
-use crate::audio::{AudioOutput, SineAudioSource, ThreadSharedAudioSource};
+use crate::audio::{AudioOutput, ThreadSharedAudioSource};
 use crate::global_mut;
 use crate::x_input::*;
 
@@ -255,6 +255,28 @@ pub unsafe extern "system" fn window_procedure(
     result
 }
 
+fn process_button_input(
+    input: &XINPUT_GAMEPAD,
+    button: u16,
+    old_state: &ButtonInput,
+    new_state: &mut ButtonInput,
+) {
+    new_state.button_is_down = input.wButtons & button == button;
+    new_state.half_transitions = if old_state.button_is_down != new_state.button_is_down {
+        1
+    } else {
+        0
+    };
+}
+
+fn normalize_i16(x: i16) -> f32 {
+    if x < 0 {
+        x as f32 / i16::MAX as f32
+    } else {
+        -x as f32 / i16::MIN as f32
+    }
+}
+
 pub fn win32main() {
     unsafe {
         {
@@ -266,10 +288,10 @@ pub fn win32main() {
             }
         }
 
-        let audio_source = BufferAudioSource::new(RingBuffer::with_default(48000*2));
+        let audio_source = BufferAudioSource::new(RingBuffer::with_default(48000 * 2));
         let audio_source = ThreadSharedAudioSource::new(audio_source);
         let _audio = AudioOutput::new(audio_source.clone());
-        let mut sound_buffer_mem = vec![0.0; 48000*2];
+        let mut sound_buffer_mem = vec![0.0; 48000 * 2];
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
 
@@ -308,10 +330,6 @@ pub fn win32main() {
 
         RUN_STATE = RunState::Running;
         let mut message = MSG::default();
-        let mut x_offset = 0;
-        let mut y_offset = 0;
-        let mut hz = 256;
-
         let mut last_rdtsc = _rdtsc();
 
         let mut performance_frequency = Default::default();
@@ -319,6 +337,8 @@ pub fn win32main() {
 
         let mut last_performance_counter = Default::default();
         QueryPerformanceCounter(&mut last_performance_counter).ok();
+        let mut old_inputs = GameInput::default();
+        let mut new_inputs = GameInput::default();
         while RUN_STATE != RunState::Stopping {
             while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
                 if message.message == WM_QUIT {
@@ -332,15 +352,16 @@ pub fn win32main() {
             //TODO(voided): Update to a more modern api.
             //TODO(voided): Test how to dynamically load XInput in case it's not available. (day 6 - 22:00)
             //TODO(voided): Should we poll this more frequently.
-
+            let max_controllers = max(new_inputs.len() as u32, XUSER_MAX_COUNT);
             let mut controller_state = XINPUT_STATE::default();
-            for controller_index in 0..XUSER_MAX_COUNT {
+            for controller_index in 0..max_controllers {
                 let result = XINPUT_GET_STATE(controller_index, &mut controller_state);
                 if result == ERROR_SUCCESS.0 {
                     //Note(voided): Controller is plugged in.
                     //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
                     let gamepad = &controller_state.Gamepad;
-
+                    let old_input = &mut old_inputs[controller_index as usize];
+                    let new_input = &mut new_inputs[controller_index as usize];
                     #[allow(unused)]
                     let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
                     #[allow(unused)]
@@ -349,32 +370,59 @@ pub fn win32main() {
                     let keypad_left = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT) != 0;
                     #[allow(unused)]
                     let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
-                    #[allow(unused)]
-                    let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-                    #[allow(unused)]
-                    let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-                    #[allow(unused)]
-                    let shoulder_left = (gamepad.wButtons & XINPUT_GAMEPAD_LEFT_SHOULDER) != 0;
-                    #[allow(unused)]
-                    let shoulder_right = (gamepad.wButtons & XINPUT_GAMEPAD_RIGHT_SHOULDER) != 0;
-                    #[allow(unused)]
-                    let button_a = (gamepad.wButtons & XINPUT_GAMEPAD_A) != 0;
-                    #[allow(unused)]
-                    let button_b = (gamepad.wButtons & XINPUT_GAMEPAD_B) != 0;
-                    #[allow(unused)]
-                    let button_x = (gamepad.wButtons & XINPUT_GAMEPAD_X) != 0;
-                    #[allow(unused)]
-                    let button_y = (gamepad.wButtons & XINPUT_GAMEPAD_Y) != 0;
 
-                    #[allow(unused)]
-                    let stick_x = gamepad.sThumbLX;
-                    #[allow(unused)]
-                    let stick_y = gamepad.sThumbLY;
+                    let x_pos = normalize_i16(gamepad.sThumbLX);
+                    let y_pos = normalize_i16(gamepad.sThumbLY);
+                    new_input.stick_left.x_axis.end = x_pos;
+                    new_input.stick_left.x_axis.min = x_pos;
+                    new_input.stick_left.x_axis.max = x_pos;
+                    new_input.stick_left.y_axis.end = y_pos;
+                    new_input.stick_left.y_axis.min = y_pos;
+                    new_input.stick_left.y_axis.max = y_pos;
 
-                    y_offset -= stick_y as i32 / 4096;
-                    x_offset += stick_x as i32 / 4096;
+                    new_input.is_analog = true;
 
-                    hz = (512 + (256.0 * (stick_y as f32 + stick_x as f32) / 60000.0) as i32) as u32;
+                    //#[allow(unused)]
+                    //let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+                    //#[allow(unused)]
+                    //let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+
+                    process_button_input(
+                        gamepad,
+                        XINPUT_GAMEPAD_Y,
+                        &old_input.button_up,
+                        &mut new_input.button_up,
+                    );
+                    process_button_input(
+                        gamepad,
+                        XINPUT_GAMEPAD_A,
+                        &old_input.button_down,
+                        &mut new_input.button_down,
+                    );
+                    process_button_input(
+                        gamepad,
+                        XINPUT_GAMEPAD_X,
+                        &old_input.button_left,
+                        &mut new_input.button_left,
+                    );
+                    process_button_input(
+                        gamepad,
+                        XINPUT_GAMEPAD_B,
+                        &old_input.button_right,
+                        &mut new_input.button_right,
+                    );
+                    process_button_input(
+                        gamepad,
+                        XINPUT_GAMEPAD_LEFT_SHOULDER,
+                        &old_input.button_shoulder_left,
+                        &mut new_input.button_shoulder_left,
+                    );
+                    process_button_input(
+                        gamepad,
+                        XINPUT_GAMEPAD_RIGHT_SHOULDER,
+                        &old_input.button_shoulder_right,
+                        &mut new_input.button_shoulder_right,
+                    );
                 } else {
                     //Note(Voided): Controller is not available.
                 }
@@ -392,22 +440,26 @@ pub fn win32main() {
             let mut s = s.lock().expect("failed to lock source");
             let rate = s.sample_rate().unwrap_or(0);
             let to_fill = ((rate as usize / 30) * 2) - s.buffer.len();
-            let sound_buffer_mem = &mut sound_buffer_mem[0..to_fill]; 
+            let sound_buffer_mem = &mut sound_buffer_mem[0..to_fill];
             let mut sound_buffer = GameSoundBuffer {
                 buffer: sound_buffer_mem,
                 samples_rate: rate,
             };
-            game_update_and_render(&mut buffer, x_offset, y_offset, &mut sound_buffer, hz);
-            
+            game_update_and_render(&new_inputs, &mut buffer, &mut sound_buffer);
+
             let (l, r) = s.buffer.write_buffers(to_fill);
-            for (t, s) in l.iter_mut().chain(r.iter_mut()).zip(sound_buffer_mem.iter()) {
+            for (t, s) in l
+                .iter_mut()
+                .chain(r.iter_mut())
+                .zip(sound_buffer_mem.iter())
+            {
                 *t = *s;
             }
 
-            //TODO(voided) sound is very delayed
-            // println!("{sample_rate}, {bytes_to_write}, {}, {}", (0.2 * sample_rate as f32 * 2.0) as usize, buffer.len());
-
             let device_context = GetDC(window);
+
+            //TODO(voided) sound is very delayed
+
             let (window_width, window_height) = window_dimension(window);
 
             display_buffer_in_window(
@@ -439,6 +491,8 @@ pub fn win32main() {
             println!("{fps} f\\s\t {nanos_per_frame} ms\\f\t {mega_cycles_per_frame} mc\\f");
 
             last_performance_counter = end_performance_counter;
+
+            mem::swap(&mut old_inputs, &mut new_inputs);
         }
     }
 }
