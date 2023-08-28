@@ -2,6 +2,7 @@ use cpal::Stream;
 use std::f32::consts::PI;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use windows::Win32::Foundation::ERROR_VOLUME_MOUNTED;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Host};
@@ -37,6 +38,7 @@ impl BufferAudioSource {
     }
 }
 
+#[derive(Debug)]
 pub struct SineAudioSource {
     pub hz: u32,
     pub volume: f32,
@@ -63,6 +65,12 @@ impl SineAudioSource {
             volume,
             position: 0.0,
         }
+    }
+
+    pub fn reset_with(&mut self, hz: u32, volume: f32) {
+        self.hz = hz;
+        self.volume = volume;
+        self.position = 0.0;
     }
 }
 

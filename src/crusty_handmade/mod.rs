@@ -1,10 +1,13 @@
+use std::mem;
+
 use crate::audio::AudioSource;
 use crate::audio::SineAudioSource;
 use crate::crusty_handmade::types::GameOffscreenBuffer;
 use crate::crusty_handmade::types::GameSoundBuffer;
-use crate::global_mut;
 
 use self::types::GameInput;
+use self::types::GameMemory;
+use self::types::GameState;
 
 pub mod types;
 
@@ -25,18 +28,33 @@ unsafe fn render_weird_gradient(buffer: &mut GameOffscreenBuffer, x_offset: i32,
     }
 }
 
-global_mut!(OUT: SineAudioSource = SineAudioSource::new(255, 0.0));
-global_mut!(X_OFFSET: i32 = 0);
-global_mut!(Y_OFFSET: i32 = 0);
-
-unsafe fn game_output_sounde(buffer: &mut GameSoundBuffer) {
+unsafe fn game_output_sound(buffer: &mut GameSoundBuffer, sound: &mut SineAudioSource) {
     let rate = buffer.samples_rate;
-
     for chunk in buffer.buffer.chunks_mut(2) {
-        let (sl, sr) = OUT.sample(rate);
+        let (sl, sr) = sound.sample(rate);
         chunk[0] = sl;
         chunk[1] = sr;
     }
+}
+
+#[allow(unused)]
+pub const fn kilobytes(x: usize) -> usize {
+    x * 1024
+}
+
+#[allow(unused)]
+pub const fn megabytes(x: usize) -> usize {
+    kilobytes(x) * 1024
+}
+
+#[allow(unused)]
+pub const fn gigabytes(x: usize) -> usize {
+    megabytes(x) * 1024
+}
+
+#[allow(unused)]
+pub const fn terrabytes(x: usize) -> usize {
+    gigabytes(x) * 1024
 }
 
 /// TODO(voided): Services that the platform layer provides to the game
@@ -44,26 +62,34 @@ unsafe fn game_output_sounde(buffer: &mut GameSoundBuffer) {
 /// TODO(voided): Services that the game provides to the platform layer
 /// It needs to take the timing, controller/keyboard input, bitmap buffer to use, sound buffer to use
 pub unsafe fn game_update_and_render<'a>(
+    game_memory: &mut GameMemory,
     inputs: &'a GameInput,
     buffer: &'a mut GameOffscreenBuffer,
     sound_buffer: &'a mut GameSoundBuffer,
 ) {
+    debug_assert!(mem::size_of::<GameState>() <= game_memory.permanent_storage_size);
+
+
+    let game_state = &mut *game_memory.permanent_storage.cast::<GameState>();
+    if !game_memory.is_initalized {
+        game_state.tone.reset_with(255, 0.3);
+        game_memory.is_initalized = true;
+    }
+
     // TODO(voided): Allow samples offset here for more robust platform options
     let input0 = &inputs[0];
 
     match input0.is_analog {
         true => {
-            OUT.hz = (256.0 + 128.0 * input0.stick_left.y_axis.end) as u32;
-            X_OFFSET += (4.0 * input0.stick_left.x_axis.end) as i32;
+            game_state.tone.hz = (256.0 + 128.0 * input0.stick_left.y_axis.end) as u32;
+            game_state.x_offset += (4.0 * input0.stick_left.x_axis.end) as i32;
         }
         false => {}
     }
 
     if input0.button_down.button_is_down {
-        Y_OFFSET += 1;
+        game_state.y_offset += 1;
     }
-
-    OUT.volume = 0.3;
-    game_output_sounde(sound_buffer);
-    render_weird_gradient(buffer, X_OFFSET, Y_OFFSET);
+    game_output_sound(sound_buffer, &mut game_state.tone);
+    render_weird_gradient(buffer, game_state.x_offset, game_state.y_offset);
 }

@@ -1,5 +1,22 @@
 use std::ffi::c_void;
 
+use crate::audio::SineAudioSource;
+
+pub struct GameMemory {
+    pub is_initalized: bool,
+    pub permanent_storage_size: usize,
+    pub permanent_storage: *mut c_void, // init to 0
+    pub transient_storage_size: usize,
+    pub transient_storage: *mut c_void,
+}
+
+#[derive(Debug)]
+pub struct GameState {
+    pub tone: SineAudioSource,
+    pub x_offset: i32,
+    pub y_offset: i32,
+}
+
 pub struct GameOffscreenBuffer {
     pub memory: *mut c_void,
     pub width: i32,
