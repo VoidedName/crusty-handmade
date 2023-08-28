@@ -4,10 +4,10 @@ use crate::crusty_handmade::types::{
 use crate::crusty_handmade::{gigabytes, megabytes};
 use crate::game_update_and_render;
 use crate::platform::windows::x_input::{
-    load_xinput, XInputGamepad, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_DPAD_DOWN,
-    XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP,
-    XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_X,
-    XINPUT_GAMEPAD_Y, XINPUT_GET_STATE, XinputState, XUSER_MAX_COUNT,
+    load_xinput, XInputGamepad, XinputState, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B,
+    XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT,
+    XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
+    XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_GET_STATE, XUSER_MAX_COUNT,
 };
 use crate::utility::ring_buffer::RingBuffer;
 use std::arch::x86_64::_rdtsc;
@@ -27,8 +27,8 @@ use windows::{
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
 
-use crate::utility::audio::{AudioOutput, ThreadSharedAudioSource, BufferAudioSource};
 use crate::global_mut;
+use crate::utility::audio::{AudioOutput, BufferAudioSource, ThreadSharedAudioSource};
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum RunState {

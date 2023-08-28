@@ -1,7 +1,7 @@
 use std::mem;
 
-use crate::utility::audio::{AudioSource, SineAudioSource};
 use crate::crusty_handmade::types::{GameOffscreenBuffer, GameSoundBuffer};
+use crate::utility::audio::{AudioSource, SineAudioSource};
 
 use self::types::GameInput;
 use self::types::GameMemory;
@@ -66,7 +66,6 @@ pub unsafe fn game_update_and_render<'a>(
     sound_buffer: &'a mut GameSoundBuffer,
 ) {
     debug_assert!(mem::size_of::<GameState>() <= game_memory.permanent_storage_size);
-
 
     let game_state = &mut *game_memory.permanent_storage.cast::<GameState>();
     if !game_memory.is_initalized {
