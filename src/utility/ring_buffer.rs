@@ -113,7 +113,7 @@ mod ring_buffer_tests {
 
     //TODO(voided): rewrite tests in term of write and reads and try to avoid messing with internal data
 
-    use crate::ring_buffer::RingBuffer;
+    use crate::utility::ring_buffer::RingBuffer;
 
     #[test]
     fn empty_len() {

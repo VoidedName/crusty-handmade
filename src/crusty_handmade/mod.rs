@@ -1,9 +1,7 @@
 use std::mem;
 
-use crate::audio::AudioSource;
-use crate::audio::SineAudioSource;
-use crate::crusty_handmade::types::GameOffscreenBuffer;
-use crate::crusty_handmade::types::GameSoundBuffer;
+use crate::utility::audio::{AudioSource, SineAudioSource};
+use crate::crusty_handmade::types::{GameOffscreenBuffer, GameSoundBuffer};
 
 use self::types::GameInput;
 use self::types::GameMemory;

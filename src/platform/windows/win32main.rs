@@ -1,10 +1,15 @@
-use crate::audio::BufferAudioSource;
-use crate::crusty_handmade::{megabytes, gigabytes};
 use crate::crusty_handmade::types::{
     ButtonInput, GameInput, GameMemory, GameOffscreenBuffer, GameSoundBuffer,
 };
+use crate::crusty_handmade::{gigabytes, megabytes};
 use crate::game_update_and_render;
-use crate::ring_buffer::RingBuffer;
+use crate::platform::windows::x_input::{
+    load_xinput, XInputGamepad, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B, XINPUT_GAMEPAD_DPAD_DOWN,
+    XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP,
+    XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_X,
+    XINPUT_GAMEPAD_Y, XINPUT_GET_STATE, XinputState, XUSER_MAX_COUNT,
+};
+use crate::utility::ring_buffer::RingBuffer;
 use std::arch::x86_64::_rdtsc;
 use std::cmp::max;
 use std::ffi::c_void;
@@ -22,9 +27,8 @@ use windows::{
     Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::WindowsAndMessaging::*,
 };
 
-use crate::audio::{AudioOutput, ThreadSharedAudioSource};
+use crate::utility::audio::{AudioOutput, ThreadSharedAudioSource, BufferAudioSource};
 use crate::global_mut;
-use crate::x_input::*;
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum RunState {
@@ -259,7 +263,7 @@ pub unsafe extern "system" fn window_procedure(
 }
 
 fn process_button_input(
-    input: &XINPUT_GAMEPAD,
+    input: &XInputGamepad,
     button: u16,
     old_state: &ButtonInput,
     new_state: &mut ButtonInput,
@@ -299,9 +303,19 @@ pub fn win32main() {
         let mut game_memory = GameMemory {
             is_initalized: false,
             permanent_storage_size: megabytes(64),
-            permanent_storage: VirtualAlloc(Some(null_mut()), megabytes(64), MEM_COMMIT, PAGE_READWRITE),
+            permanent_storage: VirtualAlloc(
+                Some(null_mut()),
+                megabytes(64),
+                MEM_COMMIT,
+                PAGE_READWRITE,
+            ),
             transient_storage_size: gigabytes(4),
-            transient_storage: VirtualAlloc(Some(null_mut()), gigabytes(4), MEM_COMMIT, PAGE_READWRITE),
+            transient_storage: VirtualAlloc(
+                Some(null_mut()),
+                gigabytes(4),
+                MEM_COMMIT,
+                PAGE_READWRITE,
+            ),
         };
 
         resize_dib_section(&mut GLOBAL_BACK_BUFFER, 1280, 720);
@@ -366,7 +380,7 @@ pub fn win32main() {
                 //TODO(voided): Test how to dynamically load XInput in case it's not available. (day 6 - 22:00)
                 //TODO(voided): Should we poll this more frequently.
                 let max_controllers = max(new_inputs.len() as u32, XUSER_MAX_COUNT);
-                let mut controller_state = XINPUT_STATE::default();
+                let mut controller_state = XinputState::default();
                 for controller_index in 0..max_controllers {
                     let result = XINPUT_GET_STATE(controller_index, &mut controller_state);
                     if result == ERROR_SUCCESS.0 {

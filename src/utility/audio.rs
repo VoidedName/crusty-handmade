@@ -2,12 +2,11 @@ use cpal::Stream;
 use std::f32::consts::PI;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use windows::Win32::Foundation::ERROR_VOLUME_MOUNTED;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Host};
 
-use crate::ring_buffer::RingBuffer;
+use crate::utility::ring_buffer::RingBuffer;
 
 pub struct BufferAudioSource {
     pub buffer: RingBuffer<f32>,
@@ -59,6 +58,7 @@ impl AudioSource for SineAudioSource {
 }
 
 impl SineAudioSource {
+    #[allow(unused)]
     pub const fn new(hz: u32, volume: f32) -> Self {
         Self {
             hz,
