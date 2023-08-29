@@ -73,10 +73,8 @@ pub unsafe fn game_update_and_render<'a>(
         let bitmap_memory = debug_platform_read_entire_file(file!());
 
         match bitmap_memory {
-            Ok(_) => {
-            }
-            Err(_) => {
-            }
+            Ok(_) => {}
+            Err(_) => {}
         }
 
         game_state.tone.reset_with(255, 0.3);
