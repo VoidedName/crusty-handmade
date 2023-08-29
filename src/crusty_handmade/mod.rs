@@ -1,6 +1,7 @@
 use std::mem;
 
 use crate::crusty_handmade::types::{GameOffscreenBuffer, GameSoundBuffer};
+use crate::platform::debug_platform_read_entire_file;
 use crate::utility::audio::{AudioSource, SineAudioSource};
 
 use self::types::GameInput;
@@ -69,7 +70,17 @@ pub unsafe fn game_update_and_render<'a>(
 
     let game_state = &mut *game_memory.permanent_storage.cast::<GameState>();
     if !game_memory.is_initalized {
+        let bitmap_memory = debug_platform_read_entire_file(file!());
+
+        match bitmap_memory {
+            Ok(_) => {
+            }
+            Err(_) => {
+            }
+        }
+
         game_state.tone.reset_with(255, 0.3);
+
         game_memory.is_initalized = true;
     }
 
