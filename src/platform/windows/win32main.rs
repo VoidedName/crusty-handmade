@@ -220,11 +220,7 @@ fn win32_process_x_input_digital_button(
 }
 
 fn normalize_i16(x: i16) -> f32 {
-    if x < 0 {
-        x as f32 / i16::MAX as f32
-    } else {
-        -x as f32 / i16::MIN as f32
-    }
+    x as f32 / i16::MAX as f32
 }
 
 pub fn win32main() {
@@ -350,8 +346,8 @@ pub fn win32main() {
                         #[allow(unused)]
                         let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
 
-                        let mut x_pos = 0.0;
-                        let mut y_pos = 0.0;
+                        let mut x_pos: f32 = 0.0;
+                        let mut y_pos: f32 = 0.0;
 
                         let x_pos_normalized = normalize_i16(gamepad.sThumbLX);
                         let y_pos_normalized = normalize_i16(gamepad.sThumbLY);
@@ -362,10 +358,14 @@ pub fn win32main() {
 
                         //TODO(voided): Consider refactoring this into a function
                         if x_pos_normalized.abs() >= STICK_DEADZONE {
-                            x_pos = x_pos_normalized;
+                            x_pos = x_pos_normalized.signum()
+                                * (x_pos_normalized.abs() - STICK_DEADZONE)
+                                / (1.0 - STICK_DEADZONE);
                         }
                         if y_pos_normalized.abs() >= STICK_DEADZONE {
-                            y_pos = y_pos_normalized;
+                            y_pos = y_pos_normalized.signum()
+                                * (y_pos_normalized.abs() - STICK_DEADZONE)
+                                / (1.0 - STICK_DEADZONE);
                         }
 
                         if gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP == XINPUT_GAMEPAD_DPAD_UP {
@@ -387,22 +387,30 @@ pub fn win32main() {
                         new_input.stick_left.x_average = x_pos;
                         new_input.stick_left.y_average = y_pos;
 
-                        new_input.is_analog = true;
+                        if x_pos != 0.0 || y_pos != 0.0 {
+                            new_input.is_analog = true;
+                        }
 
                         let mut fake_button_inputs: XInputGamepad = Default::default();
                         const FAKE_BUTTON_UP: u16 = 1;
                         const FAKE_BUTTON_DOWN: u16 = 2;
                         const FAKE_BUTTON_LEFT: u16 = 4;
                         const FAKE_BUTTON_RIGHT: u16 = 8;
+
                         if y_pos >= THRESHOLD {
                             fake_button_inputs.wButtons += FAKE_BUTTON_UP;
+                            new_input.is_analog = false;
                         } else if y_pos.abs() >= THRESHOLD {
                             fake_button_inputs.wButtons += FAKE_BUTTON_DOWN;
+                            new_input.is_analog = false;
                         }
+
                         if x_pos >= THRESHOLD {
                             fake_button_inputs.wButtons += FAKE_BUTTON_RIGHT;
+                            new_input.is_analog = false;
                         } else if x_pos.abs() >= THRESHOLD {
                             fake_button_inputs.wButtons += FAKE_BUTTON_LEFT;
+                            new_input.is_analog = false;
                         }
 
                         win32_process_x_input_digital_button(
