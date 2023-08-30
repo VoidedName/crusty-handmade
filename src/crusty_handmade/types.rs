@@ -40,18 +40,62 @@ pub struct GameSoundBuffer<'a> {
     pub buffer: &'a mut [f32],
 }
 
-pub type GameInput = [GameControllerInput; 4];
+pub type GameInput = [GameControllerInput; 5];
 
 #[derive(Default, Debug)]
 pub struct GameControllerInput {
     pub is_analog: bool,
-    pub button_up: ButtonInput,
-    pub button_down: ButtonInput,
-    pub button_left: ButtonInput,
-    pub button_right: ButtonInput,
-    pub button_shoulder_left: ButtonInput,
-    pub button_shoulder_right: ButtonInput,
+    pub is_connected: bool,
+
     pub stick_left: StickInput,
+    pub move_up: ButtonInput,
+    pub move_down: ButtonInput,
+    pub move_left: ButtonInput,
+    pub move_right: ButtonInput,
+    pub action_up: ButtonInput,
+    pub action_down: ButtonInput,
+    pub action_left: ButtonInput,
+    pub action_right: ButtonInput,
+    pub shoulder_left: ButtonInput,
+    pub shoulder_right: ButtonInput,
+    pub start: ButtonInput,
+    pub back: ButtonInput,
+}
+
+impl GameControllerInput {
+    pub fn buttons(&self) -> [&ButtonInput; 12] {
+        [
+            &self.move_up,
+            &self.move_down,
+            &self.move_left,
+            &self.move_right,
+            &self.action_up,
+            &self.action_down,
+            &self.action_left,
+            &self.action_right,
+            &self.shoulder_left,
+            &self.shoulder_right,
+            &self.start,
+            &self.back,
+        ]
+    }
+
+    pub fn buttons_mut(&mut self) -> [&mut ButtonInput; 12] {
+        [
+            &mut self.move_up,
+            &mut self.move_down,
+            &mut self.move_left,
+            &mut self.move_right,
+            &mut self.action_up,
+            &mut self.action_down,
+            &mut self.action_left,
+            &mut self.action_right,
+            &mut self.shoulder_left,
+            &mut self.shoulder_right,
+            &mut self.start,
+            &mut self.back,
+        ]
+    }
 }
 
 #[derive(Default, Debug)]
@@ -61,15 +105,7 @@ pub struct ButtonInput {
 }
 
 #[derive(Default, Debug)]
-pub struct AnalogInput {
-    pub start: f32,
-    pub end: f32,
-    pub min: f32,
-    pub max: f32,
-}
-
-#[derive(Default, Debug)]
 pub struct StickInput {
-    pub x_axis: AnalogInput,
-    pub y_axis: AnalogInput,
+    pub x_average: f32,
+    pub y_average: f32,
 }

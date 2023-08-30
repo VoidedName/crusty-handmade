@@ -1,13 +1,14 @@
 use crate::crusty_handmade::types::{
-    ButtonInput, GameInput, GameMemory, GameOffscreenBuffer, GameSoundBuffer,
+    ButtonInput, GameControllerInput, GameInput, GameMemory, GameOffscreenBuffer, GameSoundBuffer,
 };
 use crate::crusty_handmade::{gigabytes, megabytes};
 use crate::game_update_and_render;
 use crate::platform::windows::x_input::{
     load_xinput, XInputGamepad, XinputState, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B,
-    XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT, XINPUT_GAMEPAD_DPAD_RIGHT,
-    XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_LEFT_SHOULDER, XINPUT_GAMEPAD_RIGHT_SHOULDER,
-    XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y, XINPUT_GET_STATE, XUSER_MAX_COUNT,
+    XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT,
+    XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP, XINPUT_GAMEPAD_LEFT_SHOULDER,
+    XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
+    XINPUT_GET_STATE, XUSER_MAX_COUNT,
 };
 use crate::utility::ring_buffer::RingBuffer;
 use std::arch::x86_64::_rdtsc;
@@ -162,6 +163,9 @@ pub unsafe extern "system" fn window_procedure(
     let mut result: LRESULT = LRESULT(0);
 
     match message {
+        WM_QUIT => {
+            RUN_STATE = RunState::Stopping;
+        }
         WM_ACTIVATEAPP => {
             println!("WM_ACTIVATEAPP");
         }
@@ -177,67 +181,6 @@ pub unsafe extern "system" fn window_procedure(
             println!("WM_DESTROY");
             //TODO(voided): Handle this as error - recreate the window?
             RUN_STATE = RunState::Stopping;
-        }
-
-        WM_SYSKEYDOWN | WM_SYSKEYUP | WM_KEYDOWN | WM_KEYUP => {
-            const KEY_ALT_IS_DOWN_FLAG: u32 = 1 << 29;
-            const KEY_PREVIOUS_DOWN_FLAG: u32 = 1 << 30;
-            const KEY_IS_UP_FLAG: u32 = 1 << 31;
-
-            let l_param = l_param.0 as u32;
-
-            let vk_code = VIRTUAL_KEY(w_param.0 as _);
-            let key_was_down = l_param & KEY_PREVIOUS_DOWN_FLAG != 0;
-            let key_is_down = l_param & KEY_IS_UP_FLAG == 0;
-            let key_alt_is_down = l_param & KEY_ALT_IS_DOWN_FLAG != 0;
-
-            if key_is_down != key_was_down {
-                match vk_code {
-                    VK_W => {
-                        println!("W")
-                    }
-                    VK_A => {
-                        println!("A")
-                    }
-                    VK_S => {
-                        println!("S")
-                    }
-                    VK_D => {
-                        println!("D")
-                    }
-                    VK_Q => {
-                        println!("Q")
-                    }
-                    VK_E => {
-                        println!("E")
-                    }
-                    VK_UP => {
-                        println!("Up")
-                    }
-                    VK_DOWN => {
-                        println!("Down")
-                    }
-                    VK_LEFT => {
-                        println!("Left")
-                    }
-                    VK_RIGHT => {
-                        println!("Right")
-                    }
-                    VK_ESCAPE => {
-                        println!(
-                            "Escape - key_is_down: {key_is_down} - key_was_down: {key_was_down}"
-                        )
-                    }
-                    VK_SPACE => {
-                        println!("Space")
-                    }
-                    _ => {}
-                }
-            }
-
-            if vk_code == VK_F4 && key_alt_is_down {
-                RUN_STATE = RunState::Stopping;
-            }
         }
 
         WM_PAINT => {
@@ -262,7 +205,7 @@ pub unsafe extern "system" fn window_procedure(
     result
 }
 
-fn process_button_input(
+fn win32_process_x_input_digital_button(
     input: &XInputGamepad,
     button: u16,
     old_state: &ButtonInput,
@@ -354,7 +297,6 @@ pub fn win32main() {
         );
 
         RUN_STATE = RunState::Running;
-        let mut message = MSG::default();
         let mut last_rdtsc = _rdtsc();
 
         let mut performance_frequency = Default::default();
@@ -367,28 +309,38 @@ pub fn win32main() {
 
         if !game_memory.permanent_storage.is_null() {
             while RUN_STATE != RunState::Stopping {
-                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
-                    if message.message == WM_QUIT {
-                        RUN_STATE = RunState::Stopping;
-                    }
+                new_inputs[0] = Default::default();
+                let new_keyboard_controller = &mut new_inputs[0];
+                let old_keyboard_controller = &mut old_inputs[0];
 
-                    TranslateMessage(&message);
-                    DispatchMessageW(&message);
+                for (new_button, old_button) in new_keyboard_controller
+                    .buttons_mut()
+                    .into_iter()
+                    .zip(old_keyboard_controller.buttons().into_iter())
+                {
+                    new_button.button_is_down = old_button.button_is_down;
                 }
+
+                new_keyboard_controller.is_connected = true;
+
+                win32_process_pending_messages(new_keyboard_controller);
 
                 //TODO(voided): Update to a more modern api.
                 //TODO(voided): Test how to dynamically load XInput in case it's not available. (day 6 - 22:00)
                 //TODO(voided): Should we poll this more frequently.
-                let max_controllers = max(new_inputs.len() as u32, XUSER_MAX_COUNT);
+                let max_controllers = max(new_inputs.len() as u32 - 1, XUSER_MAX_COUNT);
                 let mut controller_state = XinputState::default();
                 for controller_index in 0..max_controllers {
+                    let old_input = &mut old_inputs[controller_index as usize + 1];
+                    let new_input = &mut new_inputs[controller_index as usize + 1];
                     let result = XINPUT_GET_STATE(controller_index, &mut controller_state);
+
                     if result == ERROR_SUCCESS.0 {
                         //Note(voided): Controller is plugged in.
+                        new_input.is_connected = true;
                         //TODO(voided): See if controller_state.dwPacketNumber increments too rapidly.
+
                         let gamepad = &controller_state.Gamepad;
-                        let old_input = &mut old_inputs[controller_index as usize];
-                        let new_input = &mut new_inputs[controller_index as usize];
                         #[allow(unused)]
                         let keypad_up = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP) != 0;
                         #[allow(unused)]
@@ -398,60 +350,137 @@ pub fn win32main() {
                         #[allow(unused)]
                         let keypad_right = (gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT) != 0;
 
-                        let x_pos = normalize_i16(gamepad.sThumbLX);
-                        let y_pos = normalize_i16(gamepad.sThumbLY);
-                        new_input.stick_left.x_axis.end = x_pos;
-                        new_input.stick_left.x_axis.min = x_pos;
-                        new_input.stick_left.x_axis.max = x_pos;
-                        new_input.stick_left.y_axis.end = y_pos;
-                        new_input.stick_left.y_axis.min = y_pos;
-                        new_input.stick_left.y_axis.max = y_pos;
+                        let mut x_pos = 0.0;
+                        let mut y_pos = 0.0;
+
+                        let x_pos_normalized = normalize_i16(gamepad.sThumbLX);
+                        let y_pos_normalized = normalize_i16(gamepad.sThumbLY);
+
+                        const STICK_DEADZONE: f32 = 0.1;
+
+                        const THRESHOLD: f32 = 0.5;
+
+                        //TODO(voided): Consider refactoring this into a function
+                        if x_pos_normalized.abs() >= STICK_DEADZONE {
+                            x_pos = x_pos_normalized;
+                        }
+                        if y_pos_normalized.abs() >= STICK_DEADZONE {
+                            y_pos = y_pos_normalized;
+                        }
+
+                        if gamepad.wButtons & XINPUT_GAMEPAD_DPAD_UP == XINPUT_GAMEPAD_DPAD_UP {
+                            y_pos = 1.0;
+                        } else if gamepad.wButtons & XINPUT_GAMEPAD_DPAD_DOWN
+                            == XINPUT_GAMEPAD_DPAD_DOWN
+                        {
+                            y_pos = -1.0;
+                        }
+
+                        if gamepad.wButtons & XINPUT_GAMEPAD_DPAD_LEFT == XINPUT_GAMEPAD_DPAD_LEFT {
+                            x_pos = -1.0;
+                        } else if gamepad.wButtons & XINPUT_GAMEPAD_DPAD_RIGHT
+                            == XINPUT_GAMEPAD_DPAD_RIGHT
+                        {
+                            x_pos = 1.0;
+                        }
+
+                        new_input.stick_left.x_average = x_pos;
+                        new_input.stick_left.y_average = y_pos;
 
                         new_input.is_analog = true;
 
-                        //#[allow(unused)]
-                        //let start = (gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-                        //#[allow(unused)]
-                        //let back = (gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+                        let mut fake_button_inputs: XInputGamepad = Default::default();
+                        const FAKE_BUTTON_UP: u16 = 1;
+                        const FAKE_BUTTON_DOWN: u16 = 2;
+                        const FAKE_BUTTON_LEFT: u16 = 4;
+                        const FAKE_BUTTON_RIGHT: u16 = 8;
+                        if y_pos >= THRESHOLD {
+                            fake_button_inputs.wButtons += FAKE_BUTTON_UP;
+                        } else if y_pos.abs() >= THRESHOLD {
+                            fake_button_inputs.wButtons += FAKE_BUTTON_DOWN;
+                        }
+                        if x_pos >= THRESHOLD {
+                            fake_button_inputs.wButtons += FAKE_BUTTON_RIGHT;
+                        } else if x_pos.abs() >= THRESHOLD {
+                            fake_button_inputs.wButtons += FAKE_BUTTON_LEFT;
+                        }
 
-                        process_button_input(
+                        win32_process_x_input_digital_button(
+                            &fake_button_inputs,
+                            FAKE_BUTTON_UP,
+                            &old_input.move_up,
+                            &mut new_input.move_up,
+                        );
+                        win32_process_x_input_digital_button(
+                            &fake_button_inputs,
+                            FAKE_BUTTON_DOWN,
+                            &old_input.move_down,
+                            &mut new_input.move_down,
+                        );
+                        win32_process_x_input_digital_button(
+                            &fake_button_inputs,
+                            FAKE_BUTTON_LEFT,
+                            &old_input.move_left,
+                            &mut new_input.move_left,
+                        );
+                        win32_process_x_input_digital_button(
+                            &fake_button_inputs,
+                            FAKE_BUTTON_RIGHT,
+                            &old_input.move_right,
+                            &mut new_input.move_right,
+                        );
+
+                        win32_process_x_input_digital_button(
+                            gamepad,
+                            XINPUT_GAMEPAD_START,
+                            &old_input.start,
+                            &mut new_input.start,
+                        );
+                        win32_process_x_input_digital_button(
+                            gamepad,
+                            XINPUT_GAMEPAD_BACK,
+                            &old_input.back,
+                            &mut new_input.back,
+                        );
+                        win32_process_x_input_digital_button(
                             gamepad,
                             XINPUT_GAMEPAD_Y,
-                            &old_input.button_up,
-                            &mut new_input.button_up,
+                            &old_input.action_up,
+                            &mut new_input.action_up,
                         );
-                        process_button_input(
+                        win32_process_x_input_digital_button(
                             gamepad,
                             XINPUT_GAMEPAD_A,
-                            &old_input.button_down,
-                            &mut new_input.button_down,
+                            &old_input.action_down,
+                            &mut new_input.action_down,
                         );
-                        process_button_input(
+                        win32_process_x_input_digital_button(
                             gamepad,
                             XINPUT_GAMEPAD_X,
-                            &old_input.button_left,
-                            &mut new_input.button_left,
+                            &old_input.action_left,
+                            &mut new_input.action_left,
                         );
-                        process_button_input(
+                        win32_process_x_input_digital_button(
                             gamepad,
                             XINPUT_GAMEPAD_B,
-                            &old_input.button_right,
-                            &mut new_input.button_right,
+                            &old_input.action_right,
+                            &mut new_input.action_right,
                         );
-                        process_button_input(
+                        win32_process_x_input_digital_button(
                             gamepad,
                             XINPUT_GAMEPAD_LEFT_SHOULDER,
-                            &old_input.button_shoulder_left,
-                            &mut new_input.button_shoulder_left,
+                            &old_input.shoulder_left,
+                            &mut new_input.shoulder_left,
                         );
-                        process_button_input(
+                        win32_process_x_input_digital_button(
                             gamepad,
                             XINPUT_GAMEPAD_RIGHT_SHOULDER,
-                            &old_input.button_shoulder_right,
-                            &mut new_input.button_shoulder_right,
+                            &old_input.shoulder_right,
+                            &mut new_input.shoulder_right,
                         );
                     } else {
                         //Note(Voided): Controller is not available.
+                        new_input.is_connected = false;
                     }
                 }
 
@@ -529,4 +558,116 @@ pub fn win32main() {
             }
         }
     }
+}
+
+unsafe fn win32_process_pending_messages(keyboard_controller: &mut GameControllerInput) {
+    let mut message = Default::default();
+    while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+        match message.message {
+            WM_SYSKEYDOWN | WM_SYSKEYUP | WM_KEYDOWN | WM_KEYUP => {
+                const KEY_ALT_IS_DOWN_FLAG: u32 = 1 << 29;
+                const KEY_PREVIOUS_DOWN_FLAG: u32 = 1 << 30;
+                const KEY_IS_UP_FLAG: u32 = 1 << 31;
+
+                let l_param = message.lParam.0 as u32;
+
+                let vk_code = VIRTUAL_KEY(message.wParam.0 as _);
+                let key_was_down = l_param & KEY_PREVIOUS_DOWN_FLAG != 0;
+                let key_is_down = l_param & KEY_IS_UP_FLAG == 0;
+                let key_alt_is_down = l_param & KEY_ALT_IS_DOWN_FLAG != 0;
+
+                if key_is_down != key_was_down {
+                    match vk_code {
+                        VK_W => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.move_up,
+                                key_is_down,
+                            );
+                        }
+                        VK_A => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.move_left,
+                                key_is_down,
+                            );
+                        }
+                        VK_S => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.move_down,
+                                key_is_down,
+                            );
+                        }
+                        VK_D => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.move_right,
+                                key_is_down,
+                            );
+                        }
+                        VK_Q => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.shoulder_left,
+                                key_is_down,
+                            );
+                        }
+                        VK_E => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.shoulder_right,
+                                key_is_down,
+                            );
+                        }
+                        VK_UP => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.action_up,
+                                key_is_down,
+                            );
+                        }
+                        VK_DOWN => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.action_down,
+                                key_is_down,
+                            );
+                        }
+                        VK_LEFT => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.action_left,
+                                key_is_down,
+                            );
+                        }
+                        VK_RIGHT => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.action_right,
+                                key_is_down,
+                            );
+                        }
+                        VK_ESCAPE => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.start,
+                                key_is_down,
+                            );
+                        }
+                        VK_SPACE => {
+                            win32_process_keyboard_message(
+                                &mut keyboard_controller.back,
+                                key_is_down,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+
+                if vk_code == VK_F4 && key_alt_is_down {
+                    RUN_STATE = RunState::Stopping;
+                }
+            }
+            _ => {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+    }
+}
+
+fn win32_process_keyboard_message(new_button_state: &mut ButtonInput, key_is_down: bool) {
+    debug_assert!(new_button_state.button_is_down != key_is_down);
+    new_button_state.button_is_down = key_is_down;
+    new_button_state.half_transitions += 1;
 }

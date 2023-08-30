@@ -82,19 +82,26 @@ pub unsafe fn game_update_and_render<'a>(
         game_memory.is_initalized = true;
     }
 
-    // TODO(voided): Allow samples offset here for more robust platform options
-    let input0 = &inputs[0];
-
-    match input0.is_analog {
-        true => {
-            game_state.tone.hz = (256.0 + 128.0 * input0.stick_left.y_axis.end) as u32;
-            game_state.x_offset += (4.0 * input0.stick_left.x_axis.end) as i32;
+    for input in inputs {
+        // TODO(voided): Allow samples offset here for more robust platform options
+        match input.is_analog {
+            true => {
+                game_state.tone.hz = (256.0 + 128.0 * input.stick_left.y_average) as u32;
+                game_state.x_offset += (4.0 * input.stick_left.x_average) as i32;
+            }
+            false => {
+                if input.move_right.button_is_down {
+                    game_state.x_offset += 1;
+                }
+                if input.move_left.button_is_down {
+                    game_state.x_offset -= 1;
+                }
+            }
         }
-        false => {}
-    }
 
-    if input0.button_down.button_is_down {
-        game_state.y_offset += 1;
+        if input.action_down.button_is_down {
+            game_state.y_offset += 1;
+        }
     }
     game_output_sound(sound_buffer, &mut game_state.tone);
     render_weird_gradient(buffer, game_state.x_offset, game_state.y_offset);
