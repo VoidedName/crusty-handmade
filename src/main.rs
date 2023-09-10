@@ -29,7 +29,7 @@ macro_rules! global_mut {
 
 use crate::crusty_handmade::game_update_and_render;
 use global_mut;
-use platform::platform_main;
+use platform::{platform_main, windows};
 
 fn main() {
     platform_main();

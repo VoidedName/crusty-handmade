@@ -117,12 +117,16 @@ pub struct AudioOutput {
     pub sample_rate: u32,
     pub channels: u32,
     stream: Stream,
+    buffer_duration: f32,
 }
 
 //TODO: Deal with disconnected audio etc
 
 impl AudioOutput {
-    pub fn new<Source: AudioSource + 'static>(source: Source) -> Self {
+    pub fn new<Source: AudioSource + 'static>(
+        source: ThreadSharedAudioSource<Source>,
+        buffer_duration: f32,
+    ) -> Self {
         let host = cpal::default_host();
         let mut source = source;
         let device = host
@@ -141,7 +145,7 @@ impl AudioOutput {
 
         let channels = config.channels.into();
 
-        let buffers_size = ((sample_rate.0 * 2) as f32 * 0.005) as u32;
+        let buffers_size = ((sample_rate.0 * channels) as f32 * buffer_duration) as u32;
 
         config.buffer_size = BufferSize::Fixed(buffers_size);
 
@@ -151,8 +155,9 @@ impl AudioOutput {
             .build_output_stream(
                 &config,
                 move |data: &mut [f32], _info| {
+                    let sound = &mut source.inner_source.lock().expect("failed to lock sound");
                     for d in data.chunks_mut(2) {
-                        let (l, r) = source.sample(sample_rate.0);
+                        let (l, r) = sound.sample(sample_rate.0);
 
                         d[0] = l;
                         d[1] = r;
@@ -172,6 +177,7 @@ impl AudioOutput {
             sample_rate: sample_rate.0,
             stream,
             channels,
+            buffer_duration,
         }
     }
 }

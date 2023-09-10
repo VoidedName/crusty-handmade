@@ -1,7 +1,7 @@
 use std::path::Path;
 
 #[cfg(windows)]
-mod windows;
+pub mod windows;
 
 #[allow(unused)]
 pub fn debug_platform_read_entire_file<C>(filename: C) -> std::io::Result<Vec<u8>>
