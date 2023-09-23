@@ -1,5 +1,5 @@
-use utility::audio::SineAudioSource;
 use std::ffi::c_void;
+use utility::audio::SineAudioSource;
 
 pub struct GameMemory {
     pub is_initalized: bool,

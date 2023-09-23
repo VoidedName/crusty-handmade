@@ -1,5 +1,5 @@
-use utility::audio::{SineAudioSource, AudioSource};
 use std::mem;
+use utility::audio::{AudioSource, SineAudioSource};
 
 use types::GameOffscreenBuffer;
 use types::GameSoundBuffer;
@@ -51,10 +51,10 @@ pub unsafe fn game_update_and_render<'a>(
     sound_buffer: &'a mut GameSoundBuffer,
 ) {
     debug_assert!(mem::size_of::<GameState>() <= game_memory.permanent_storage_size);
-    
+
     // TODO(voided): currently, we can't load from the platform layer, as it is circular
     // resolve this by moving those things into their own crate
-    
+
     let game_state = &mut *game_memory.permanent_storage.cast::<GameState>();
     if !game_memory.is_initalized {
         game_state.tone.reset_with(255, 0.3);

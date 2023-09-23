@@ -31,7 +31,7 @@ mod hot_lib {
     pub use crusty_handmade::types::*;
 }
 
-/// TODO(voided) make this conditional 
+/// TODO(voided) make this conditional
 mod game {
     use crate::hot_lib;
     pub use hot_lib::*;
