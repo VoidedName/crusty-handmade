@@ -1,8 +1,8 @@
+use utility::audio::{SineAudioSource, AudioSource};
 use std::mem;
 
-use crate::crusty_handmade::types::{GameOffscreenBuffer, GameSoundBuffer};
-use crate::platform::debug_platform_read_entire_file;
-use crate::utility::audio::{AudioSource, SineAudioSource};
+use types::GameOffscreenBuffer;
+use types::GameSoundBuffer;
 
 use self::types::GameInput;
 use self::types::GameMemory;
@@ -36,30 +36,14 @@ unsafe fn game_output_sound(buffer: &mut GameSoundBuffer, sound: &mut SineAudioS
     }
 }
 
-#[allow(unused)]
-pub const fn kilobytes(x: usize) -> usize {
-    x * 1024
-}
-
-#[allow(unused)]
-pub const fn megabytes(x: usize) -> usize {
-    kilobytes(x) * 1024
-}
-
-#[allow(unused)]
-pub const fn gigabytes(x: usize) -> usize {
-    megabytes(x) * 1024
-}
-
-#[allow(unused)]
-pub const fn terrabytes(x: usize) -> usize {
-    gigabytes(x) * 1024
-}
-
 /// TODO(voided): Services that the platform layer provides to the game
 
 /// TODO(voided): Services that the game provides to the platform layer
 /// It needs to take the timing, controller/keyboard input, bitmap buffer to use, sound buffer to use
+
+///  # Safety
+///  does pointer stuff, consider refactoring to be Safety
+#[no_mangle]
 pub unsafe fn game_update_and_render<'a>(
     game_memory: &mut GameMemory,
     inputs: &'a GameInput,
@@ -67,16 +51,12 @@ pub unsafe fn game_update_and_render<'a>(
     sound_buffer: &'a mut GameSoundBuffer,
 ) {
     debug_assert!(mem::size_of::<GameState>() <= game_memory.permanent_storage_size);
-
+    
+    // TODO(voided): currently, we can't load from the platform layer, as it is circular
+    // resolve this by moving those things into their own crate
+    
     let game_state = &mut *game_memory.permanent_storage.cast::<GameState>();
     if !game_memory.is_initalized {
-        let bitmap_memory = debug_platform_read_entire_file(file!());
-
-        match bitmap_memory {
-            Ok(_) => {}
-            Err(_) => {}
-        }
-
         game_state.tone.reset_with(255, 0.3);
 
         game_memory.is_initalized = true;

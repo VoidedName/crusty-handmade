@@ -1,6 +1,4 @@
-mod crusty_handmade;
 mod platform;
-mod utility;
 
 /*
 TODO(voided): This is not a final platform layer!!!
@@ -27,9 +25,20 @@ macro_rules! global_mut {
     };
 }
 
-use crate::crusty_handmade::game_update_and_render;
+#[hot_lib_reloader::hot_module(dylib = "crusty_handmade")]
+mod hot_lib {
+    hot_functions_from_file!("crusty_handmade/src/lib.rs");
+    pub use crusty_handmade::types::*;
+}
+
+/// TODO(voided) make this conditional 
+mod game {
+    use crate::hot_lib;
+    pub use hot_lib::*;
+}
+
 use global_mut;
-use platform::{platform_main, windows};
+use platform::platform_main;
 
 fn main() {
     platform_main();

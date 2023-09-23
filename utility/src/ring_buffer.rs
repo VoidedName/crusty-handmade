@@ -43,6 +43,10 @@ impl<T> RingBuffer<T> {
         self.capacity - self.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn len(&self) -> usize {
         self.len
     }
@@ -113,7 +117,7 @@ mod ring_buffer_tests {
 
     //TODO(voided): rewrite tests in term of write and reads and try to avoid messing with internal data
 
-    use crate::utility::ring_buffer::RingBuffer;
+    use crate::ring_buffer::RingBuffer;
 
     #[test]
     fn empty_len() {

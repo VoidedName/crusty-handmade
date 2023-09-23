@@ -1,8 +1,7 @@
-use crate::crusty_handmade::types::{
+use crate::game::game_update_and_render;
+use crate::game::{
     ButtonInput, GameControllerInput, GameInput, GameMemory, GameOffscreenBuffer, GameSoundBuffer,
 };
-use crate::crusty_handmade::{gigabytes, megabytes};
-use crate::game_update_and_render;
 use crate::platform::windows::win32_x_input::{
     load_xinput, XInputGamepad, XinputState, XINPUT_GAMEPAD_A, XINPUT_GAMEPAD_B,
     XINPUT_GAMEPAD_BACK, XINPUT_GAMEPAD_DPAD_DOWN, XINPUT_GAMEPAD_DPAD_LEFT,
@@ -10,7 +9,6 @@ use crate::platform::windows::win32_x_input::{
     XINPUT_GAMEPAD_RIGHT_SHOULDER, XINPUT_GAMEPAD_START, XINPUT_GAMEPAD_X, XINPUT_GAMEPAD_Y,
     XINPUT_GET_STATE, XUSER_MAX_COUNT,
 };
-use crate::utility::ring_buffer::RingBuffer;
 use std::arch::x86_64::_rdtsc;
 use std::cmp::max;
 use std::ffi::c_void;
@@ -18,6 +16,8 @@ use std::fmt::Debug;
 use std::mem;
 use std::ptr::null_mut;
 use std::time::Duration;
+use utility::ring_buffer::RingBuffer;
+use utility::{gigabytes, megabytes};
 
 use windows::Win32::Media::{timeBeginPeriod, TIMERR_NOERROR};
 use windows::Win32::System::Memory::{
@@ -31,7 +31,7 @@ use windows::{
 };
 
 use crate::global_mut;
-use crate::utility::audio::{AudioOutput, BufferAudioSource, ThreadSharedAudioSource};
+use utility::audio::{AudioOutput, BufferAudioSource, ThreadSharedAudioSource};
 
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum RunState {

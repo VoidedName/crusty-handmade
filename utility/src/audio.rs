@@ -6,7 +6,7 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{BufferSize, Host};
 
-use crate::utility::ring_buffer::RingBuffer;
+use crate::ring_buffer::RingBuffer;
 
 pub struct BufferAudioSource {
     pub buffer: RingBuffer<f32>,
@@ -128,7 +128,7 @@ impl AudioOutput {
         buffer_duration: f32,
     ) -> Self {
         let host = cpal::default_host();
-        let mut source = source;
+        let source = source;
         let device = host
             .default_output_device()
             .expect("no output device available");
